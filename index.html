@@ -247,7 +247,9 @@ async function refreshImageStatus() {
   if (!target) return;
   try {
     const r = await fetch(`/api/image-status?target=${encodeURIComponent(target)}&mode=${mode}`);
+    if (!r.ok) throw new Error("HTTP " + r.status);
     const j = await r.json();
+    if (j.error) throw new Error(j.error);
     if (j.exists) {
       setStatus($("#stImage"), `image: ${j.rel} (built ${j.built})`, "ok");
       $("#btnFlash").disabled = false;
@@ -255,7 +257,11 @@ async function refreshImageStatus() {
       setStatus($("#stImage"), `no image for this target — Build first`, "warn");
       $("#btnFlash").disabled = true;
     }
-  } catch (e) { setStatus($("#stImage"), "", ""); }
+  } catch (e) {
+    // Old server (no /api/image-status) or a transient error — don't block Flash.
+    setStatus($("#stImage"), "image status unavailable — restart serve.py to enable it", "warn");
+    $("#btnFlash").disabled = false;
+  }
 }
 $("#target").onchange = refreshImageStatus;
 $("#flashMode").onchange = refreshImageStatus;
