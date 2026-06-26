@@ -116,6 +116,13 @@ def target_log_dir(target):
     return os.path.join(ROOT, "LOG")
 
 
+def now_hms_ms():
+    """Local wall-clock 'HH:MM:SS.mmm' for serial line timestamps."""
+    t = time.time()
+    lt = time.localtime(t)
+    return "%02d:%02d:%02d.%03d" % (lt.tm_hour, lt.tm_min, lt.tm_sec, int((t % 1) * 1000))
+
+
 def port_is_free(port):
     """True if the tty can be opened (not held by screen/picocom/flasher)."""
     try:
@@ -438,6 +445,7 @@ class Handler(BaseHTTPRequestHandler):
     def api_serial(self, q=None):
         q = q or {}
         autolog = q.get("autolog", ["0"])[0] == "1"
+        ts_on = q.get("ts", ["0"])[0] == "1"   # prefix each line with HH:MM:SS.mmm
         if STATE["serial_active"]:
             self._sse_headers()
             sse_send(self.wfile, "done", {"ok": False, "msg": "Serial is already being read."})
@@ -488,11 +496,15 @@ class Handler(BaseHTTPRequestHandler):
                     chunk = f.read(4096)
                     if not chunk:
                         continue
-                    writer.write(chunk)
+                    if not ts_on:
+                        writer.write(chunk)          # raw bytes to the log file
                     buf += chunk
                     while b"\n" in buf:
                         line, buf = buf.split(b"\n", 1)
                         text = line.decode("utf-8", "replace").rstrip("\r")
+                        if ts_on:
+                            text = "[%s] %s" % (now_hms_ms(), text)
+                            writer.write((text + "\n").encode("utf-8"))  # timestamped to file too
                         if not sse_send(self.wfile, "line", {"text": text}):
                             stop.set()
                             break

@@ -5,14 +5,18 @@ firmware for the **Realtek AmebaPro2 (RTL8735B / AMB82-mini)** FreeRTOS SDK — 
 one local page. Python 3 standard library only, no `pip install`, no internet: everything
 runs on `127.0.0.1`.
 
+![panel](docs/screenshot.png)
+
 It wraps the toolchain you already use (`build_freertos.sh` / `build_test.sh`, the
 `uartfwburn` flasher, and the serial port) behind a few buttons:
 
 1. **Pick a build target** — full app or any incremental `TEST/<id>` (auto-discovered).
 2. **Build** — runs the build script; shows a progress bar and the result.
 3. **Check UART** — finds the USB-serial port and tells you if it is free.
-4. **Flash** — calls `uartfwburn` with the working baud sweep (2M → 921600 → 115200).
-5. **Serial log** — streams the board's UART output to the page and to a file.
+4. **Flash** — calls `uartfwburn` (single clean attempt at a chosen baud; default 115200,
+   since the multi-baud sweep can wedge the AmebaPro2 ROM).
+5. **Serial log** — streams the board's UART output to the page and to a file, with optional
+   per-line timestamps and rotating per-session logs.
 
 
 > **Scope / honesty:** this is currently tailored to the **AmebaPro2 / AMB82-mini**

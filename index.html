@@ -147,6 +147,10 @@
         <input type="checkbox" id="autolog" style="width:auto;cursor:pointer">
         Auto-log session → <code>LOG/</code> (full, rotating @10 MB)
       </label>
+      <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
+        <input type="checkbox" id="tsLog" style="width:auto;cursor:pointer">
+        Timestamps — prefix each line with <code>[HH:MM:SS.mmm]</code> (UI + file)
+      </label>
       <div class="status" id="stSerial"></div>
       <div class="hint">Off: one file in <code>logs/</code>. On: full session to the target's
         <code>LOG/session&lt;NN&gt;_&lt;date&gt;_part&lt;NN&gt;.log</code>. Stop it before flashing — one port only.</div>
@@ -295,9 +299,10 @@ $("#btnFlash").onclick = () => {
 $("#btnSerial").onclick = () => {
   $("#btnSerial").disabled=true; $("#btnSerialStop").disabled=false;
   const auto = $("#autolog").checked ? "1" : "0";
+  const ts = $("#tsLog").checked ? "1" : "0";
   setStatus($("#stSerial"), auto==="1" ? "reading port… (auto-log on)" : "reading port…", "warn");
   log("\n=== SERIAL @115200 ===","l-cmd");
-  runStream(`/api/serial?autolog=${auto}&target=${encodeURIComponent($("#target").value)}`, {
+  runStream(`/api/serial?autolog=${auto}&ts=${ts}&target=${encodeURIComponent($("#target").value)}`, {
     onLine: d => log(d.text),
     onDone: d => {
       $("#btnSerial").disabled=false; $("#btnSerialStop").disabled=true;
