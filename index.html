@@ -87,7 +87,7 @@
     </div>
 
     <div class="step">
-      <h2>4 · UART availability</h2>
+      <h2>3 · UART availability</h2>
       <div class="row">
         <button id="btnUart">⟳ Check port</button>
         <span class="pill" id="pillUart">not checked</span>
@@ -96,7 +96,7 @@
     </div>
 
     <div class="step">
-      <h2>5 · Flash</h2>
+      <h2>4 · Flash</h2>
       <label>Mode</label>
       <select id="flashMode">
         <option value="full">full — flash_ntz.bin (fast)</option>
@@ -112,7 +112,7 @@
       <div class="memo">
         <b>Enter UART DOWNLOAD mode</b> (the panel can't press the buttons):
         <ol>
-          <li>If a serial log is running, stop it — the <b>■ Stop</b> button in step 6
+          <li>If a serial log is running, stop it — the <b>■ Stop</b> button in step 5
               (Serial log). It's greyed out when nothing is running. Also close any external
               monitor (Arduino IDE / <code>screen</code>) holding the port.</li>
           <li>Press both board buttons together — <b>RESET</b> and <b>UART&nbsp;DOWNLOAD</b>
@@ -139,7 +139,7 @@
     </div>
 
     <div class="step">
-      <h2>6 · Serial log</h2>
+      <h2>5 · Serial log</h2>
       <div class="row">
         <button id="btnSerial">▶ Start log</button>
         <button id="btnSerialStop" class="danger" disabled>■ Stop</button>
