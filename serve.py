@@ -414,13 +414,17 @@ class Handler(BaseHTTPRequestHandler):
                 if "ping ok" in blob and ("ucfg fail" in blob or "download fail" in blob):
                     # Board IS in download mode, but the ROM/adapter handshake failed.
                     rate = "non-standard rate" in blob
+                    swept = "trying slower" in blob
                     msg = ("Board IS in download mode (ping ok) but the download handshake failed "
                            "(ucfg/download fail). " +
-                           ("Your CH340G reported 'non-standard rate' — it can't hold the high bauds; "
-                            "set Baud = 115200 (single attempt) and try once more. " if rate else "") +
-                           "The AmebaPro2 ROM accepts ONE clean attempt per download-mode entry, so "
-                           "RE-ENTER it (re-enter download mode / reboot the board) before each retry. "
-                           "If it still fails, UNPLUG/REPLUG the USB cable to re-enumerate the adapter.")
+                           ("Your CH340G reported 'non-standard rate' — it can't hold the high bauds. " if rate else "") +
+                           ("You used the Auto sweep: each failed attempt wedges the ROM, so 115200 never "
+                            "got a clean try. Set Baud = 115200 (single attempt). " if swept
+                            else "Set Baud = 115200 (single attempt) if you haven't. ") +
+                           "The ROM accepts ONE attempt per download-mode entry, so re-enter download mode "
+                           "(RESET + UART DOWNLOAD together / reboot) before EACH retry. If it stays wedged, "
+                           "POWER-CYCLE the USB adapter AND the board (replug USB + reboot) to re-enumerate "
+                           "the CH340G — often the only fix.")
                 elif ("ping fail" in blob or "open fail" in blob or "boot fail" in blob):
                     msg = ("Board did NOT respond (ping fail) — it is not in UART DOWNLOAD mode, or the "
                            "port is busy. Re-enter download mode (hold UART DOWNLOAD, tap RESET, "

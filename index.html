@@ -104,10 +104,10 @@
       </select>
       <label style="margin-top:8px">Baud</label>
       <select id="flashBaud">
-        <option value="auto">Auto sweep (2M → 921k → 115200)</option>
-        <option value="115200">115200 — single attempt (reliable on CH340G)</option>
+        <option value="115200">115200 — single attempt (reliable, default)</option>
         <option value="921600">921600 — single attempt</option>
         <option value="2000000">2000000 — single attempt (fast, flaky on CH340G)</option>
+        <option value="auto">Auto sweep 2M→921k→115200 (can wedge the ROM — avoid)</option>
       </select>
       <div class="memo">
         <b>Enter UART DOWNLOAD mode</b> (the panel can't press the buttons):
