@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AMB82-mini — build &amp; flash panel</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --fg:#e6e8ec; --mut:#9aa3b2;
+          --ok:#3fb950; --err:#f85149; --warn:#d29922; --accent:#388bfd; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); overflow:hidden;
+         display:flex; flex-direction:column;
+         font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
+  header { flex:none; padding:16px 20px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:16px; }
+  header .sub { color:var(--mut); font-size:12px; margin-top:4px; }
+  main { flex:1; min-height:0; display:grid; grid-template-columns:340px 1fr; gap:0; }
+  .left { padding:16px; border-right:1px solid var(--line); overflow:auto; min-height:0; }
+  .right { display:flex; flex-direction:column; min-width:0; min-height:0; }
+  .step { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:14px; margin-bottom:14px; }
+  .step h2 { margin:0 0 8px; font-size:13px; color:var(--mut); font-weight:600;
+             text-transform:uppercase; letter-spacing:.04em; }
+  label { display:block; font-size:12px; color:var(--mut); margin-bottom:4px; }
+  select, button { font:inherit; }
+  select { width:100%; padding:8px; background:#0d1017; color:var(--fg);
+           border:1px solid var(--line); border-radius:8px; }
+  .row { display:flex; gap:8px; align-items:center; }
+  button { cursor:pointer; padding:9px 12px; border-radius:8px; border:1px solid var(--line);
+           background:#222631; color:var(--fg); }
+  button:hover:not(:disabled) { border-color:var(--accent); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { background:#3a1d1d; border-color:#5a2a2a; }
+  .bar { height:8px; background:#0d1017; border-radius:6px; overflow:hidden; margin-top:10px;
+         border:1px solid var(--line); }
+  .bar > i { display:block; height:100%; width:0; background:var(--accent);
+             transition:width .2s; }
+  .bar.indet > i { width:35%; animation:slide 1.1s infinite ease-in-out; }
+  @keyframes slide { 0%{margin-left:-35%} 100%{margin-left:100%} }
+  .status { margin-top:8px; font-size:13px; min-height:18px; }
+  .status.ok { color:var(--ok); } .status.err { color:var(--err); } .status.warn { color:var(--warn); }
+  .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px;
+          border:1px solid var(--line); color:var(--mut); }
+  .pill.ok{color:var(--ok);border-color:#27502f} .pill.err{color:var(--err);border-color:#5a2a2a}
+  .memo { background:#1a1f0d; border:1px solid #3a3a1a; color:#e8e6c0; border-radius:8px;
+          padding:10px; font-size:12.5px; margin-top:10px; }
+  .right h2 { flex:none; margin:0; padding:12px 16px; font-size:13px; color:var(--mut);
+              border-bottom:1px solid var(--line); display:flex; justify-content:space-between; }
+  #log { flex:1; min-height:0; margin:0; padding:12px 16px; overflow:auto; white-space:pre-wrap;
+         font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; color:#cdd3dc; }
+  #log .l-ok{color:var(--ok)} #log .l-err{color:var(--err)} #log .l-cmd{color:var(--accent)}
+  .hint { color:var(--mut); font-size:11.5px; margin-top:6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AMB82-mini — build &amp; flash panel</h1>
+  <div class="sub">Local, offline. The UART DOWNLOAD / RESET buttons on the board are pressed by a human — the panel cannot press them for you.</div>
+</header>
+<main>
+  <div class="left">
+
+    <div class="step">
+      <h2>1 · Build target</h2>
+      <label>Project / test</label>
+      <div class="row">
+        <select id="target"></select>
+        <button id="btnReload" title="Refresh list">⟳</button>
+      </div>
+      <div class="hint">Discovered from <code>TEST/*/test.cmake</code> + the full application.</div>
+    </div>
+
+    <div class="step">
+      <h2>2 · Build</h2>
+      <div class="row">
+        <button id="btnBuild" class="primary">▶ Build</button>
+      </div>
+      <div class="bar" id="barBuild"><i></i></div>
+      <div class="status" id="stBuild"></div>
+    </div>
+
+    <div class="step">
+      <h2>4 · UART availability</h2>
+      <div class="row">
+        <button id="btnUart">⟳ Check port</button>
+        <span class="pill" id="pillUart">not checked</span>
+      </div>
+      <div class="status" id="stUart"></div>
+    </div>
+
+    <div class="step">
+      <h2>5 · Flash</h2>
+      <label>Mode</label>
+      <select id="flashMode">
+        <option value="full">full — flash_ntz.bin (fast)</option>
+        <option value="app">app — firmware_ntz.bin (slow, no bootloader)</option>
+      </select>
+      <div class="memo">
+        Before flashing put the board into <b>UART DOWNLOAD</b>: stop the serial log;
+        hold <b>UART DOWNLOAD</b>; tap <b>RESET</b>; release DOWNLOAD after ~1 s.
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="btnFlash" class="primary">⚡ Flash</button>
+      </div>
+      <div class="bar" id="barFlash"><i></i></div>
+      <div class="status" id="stFlash"></div>
+    </div>
+
+    <div class="step">
+      <h2>6 · Serial log</h2>
+      <div class="row">
+        <button id="btnSerial">▶ Start log</button>
+        <button id="btnSerialStop" class="danger" disabled>■ Stop</button>
+      </div>
+      <div class="status" id="stSerial"></div>
+      <div class="hint">Written to <code>logs/serial_&lt;date&gt;.log</code>. Stop it before flashing — there is only one port.</div>
+    </div>
+
+  </div>
+
+  <div class="right">
+    <h2><span>Output</span><span style="display:flex;gap:6px">
+      <button id="btnSave" style="padding:2px 8px;font-size:11px">⤓ save</button>
+      <button id="btnClear" style="padding:2px 8px;font-size:11px">clear</button>
+    </span></h2>
+    <pre id="log"></pre>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const logEl = $("#log");
+let activeStream = null;
+
+// ── Batched, capped log ──────────────────────────────────────────────────────
+// A full SDK build prints tens of thousands of lines. Appending one DOM node per
+// line (and scrolling on each) crashes the tab. We buffer lines and flush once
+// per animation frame, and keep only the last LOG_MAX lines in the DOM.
+const LOG_MAX = 2000;
+let logBuf = [];
+let logScheduled = false;
+function log(text, cls) {
+  logBuf.push([text, cls]);
+  if (!logScheduled) { logScheduled = true; requestAnimationFrame(flushLog); }
+}
+function flushLog() {
+  logScheduled = false;
+  const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 60;
+  const frag = document.createDocumentFragment();
+  for (const [text, cls] of logBuf) {
+    const span = document.createElement("span");
+    if (cls) span.className = cls;
+    span.textContent = text + "\n";
+    frag.appendChild(span);
+  }
+  logBuf.length = 0;
+  logEl.appendChild(frag);
+  let extra = logEl.childNodes.length - LOG_MAX;
+  while (extra-- > 0) logEl.removeChild(logEl.firstChild);
+  if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setStatus(el, msg, cls) { el.className = "status " + (cls||""); el.textContent = msg || ""; }
+function pct(line) { const m = line.match(/\[\s*(\d+)%\]/); return m ? +m[1] : null; }       // cmake/make
+function anyPct(line) { const m = line.match(/(\d{1,3})\s*%/); if (!m) return null;            // flasher
+  const v = +m[1]; return v>=0 && v<=100 ? v : null; }
+
+// Generic SSE runner over a GET endpoint. onLine/onProgress/onDone callbacks.
+function runStream(url, { onLine, onProgress, onDone }) {
+  const es = new EventSource(url);
+  activeStream = es;
+  if (onLine) es.addEventListener("line", e => onLine(JSON.parse(e.data)));
+  if (onProgress) es.addEventListener("progress", e => onProgress(JSON.parse(e.data)));
+  es.addEventListener("done", e => { es.close(); activeStream=null; onDone(JSON.parse(e.data)); });
+  es.onerror = () => { es.close(); activeStream=null; onDone({ ok:false, code:-1, msg:"connection lost" }); };
+  return es;
+}
+
+// ── targets ──
+async function loadTargets() {
+  const sel = $("#target");
+  if (location.protocol === "file:") {
+    sel.innerHTML = `<option>⚠ opened as a file — a server is required</option>`;
+    setStatus($("#stBuild"),
+      "Open http://127.0.0.1:8765 (run serve.py) instead of double-clicking the file.", "err");
+    log("⚠ Page opened as file:// — the API is unreachable. Run serve.py and open http://127.0.0.1:8765","l-err");
+    return;
+  }
+  try {
+    const r = await fetch("/api/targets");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    sel.innerHTML = j.targets.map(t => `<option value="${t.id}">${t.label}</option>`).join("");
+    setStatus($("#stBuild"), "", "");
+  } catch (e) {
+    sel.innerHTML = `<option>⚠ server not responding</option>`;
+    setStatus($("#stBuild"), "Server is not running. Start serve.py, then press refresh.", "err");
+    log("⚠ Failed to fetch targets: " + e.message, "l-err");
+  }
+}
+
+// ── build ──
+$("#btnBuild").onclick = () => {
+  const target = $("#target").value;
+  const bar = $("#barBuild"), fill = bar.querySelector("i");
+  $("#btnBuild").disabled = true; bar.classList.add("indet"); fill.style.width="";
+  setStatus($("#stBuild"), "building… 0%", "warn");
+  // The full build log is NOT streamed (it would flood this panel and crash the
+  // tab). Only progress + the build status are shown here; the output panel is
+  // for Serial. Error lines (and the tail on failure) still arrive via onLine.
+  runStream(`/api/build?target=${encodeURIComponent(target)}`, {
+    onProgress: d => { bar.classList.remove("indet"); fill.style.width=d.pct+"%";
+      setStatus($("#stBuild"), "building… "+d.pct+"%", "warn"); },
+    onLine: d => log(d.text, "l-err"),
+    onDone: d => {
+      bar.classList.remove("indet"); fill.style.width = d.ok ? "100%":fill.style.width;
+      $("#btnBuild").disabled=false;
+      if (d.ok){ setStatus($("#stBuild"),"✓ build succeeded → images/","ok"); }
+      else { setStatus($("#stBuild"),`✗ failed (code ${d.code}) ${d.msg||""}`,"err"); }
+    }
+  });
+};
+
+// ── uart ──
+$("#btnUart").onclick = async () => {
+  setStatus($("#stUart"),"checking…","warn");
+  const r = await fetch("/api/uart"); const j = await r.json();
+  const pill = $("#pillUart");
+  if (!j.available){ pill.textContent="no port"; pill.className="pill err";
+    setStatus($("#stUart"), j.reason, "err"); return; }
+  if (j.free){ pill.textContent="ready"; pill.className="pill ok";
+    setStatus($("#stUart"), `${j.port} — ${j.reason}`, "ok"); }
+  else { pill.textContent="busy"; pill.className="pill err";
+    setStatus($("#stUart"), `${j.port} — ${j.reason}`, "err"); }
+};
+
+// ── flash ──
+$("#btnFlash").onclick = () => {
+  const mode = $("#flashMode").value;
+  const bar = $("#barFlash"), fill = bar.querySelector("i");
+  $("#btnFlash").disabled=true; bar.classList.add("indet"); fill.style.width="";
+  setStatus($("#stFlash"),"flashing… (board must be in UART DOWNLOAD mode)","warn");
+  log(`\n=== FLASH: ${mode} ===`, "l-cmd");
+  runStream(`/api/flash?mode=${mode}`, {
+    onLine: d => { log(d.text); const p = anyPct(d.text);
+      if (p!==null){ bar.classList.remove("indet"); fill.style.width=p+"%"; } },
+    onDone: d => {
+      bar.classList.remove("indet"); fill.style.width="100%";
+      $("#btnFlash").disabled=false;
+      if (d.ok){ setStatus($("#stFlash"), "✓ "+d.msg, "ok"); log("✓ "+d.msg,"l-ok"); }
+      else { fill.style.width="0"; setStatus($("#stFlash"), "✗ "+(d.msg||"failed"), "err"); log("✗ "+(d.msg||"FAIL"),"l-err"); }
+    }
+  });
+};
+
+// ── serial ──
+$("#btnSerial").onclick = () => {
+  $("#btnSerial").disabled=true; $("#btnSerialStop").disabled=false;
+  setStatus($("#stSerial"),"reading port…","warn");
+  log("\n=== SERIAL @115200 ===","l-cmd");
+  runStream("/api/serial", {
+    onLine: d => log(d.text),
+    onDone: d => {
+      $("#btnSerial").disabled=false; $("#btnSerialStop").disabled=true;
+      setStatus($("#stSerial"), d.msg||"stopped", d.ok?"ok":"err");
+      if (d.msg) log(d.msg, d.ok?"l-ok":"l-err");
+    }
+  });
+};
+$("#btnSerialStop").onclick = async () => { await fetch("/api/serial/stop",{method:"POST"}); };
+
+$("#btnClear").onclick = () => { logBuf.length = 0; logEl.innerHTML=""; };
+$("#btnReload").onclick = () => loadTargets();
+// Save whatever is currently shown in the output panel to a .txt file.
+// (The serial stream is also written in full to logs/serial_<date>.log on the server.)
+$("#btnSave").onclick = () => {
+  const text = logEl.textContent;
+  if (!text.trim()) { setStatus($("#stSerial"), "nothing to save yet", "warn"); return; }
+  const ts = new Date().toISOString().replace(/[:.]/g,"-").slice(0,19);
+  const blob = new Blob([text], { type:"text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `serial_output_${ts}.txt`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+loadTargets();
+</script>
+</body>
+</html>
