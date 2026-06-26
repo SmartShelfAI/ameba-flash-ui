@@ -162,7 +162,9 @@ def sse_send(wfile, event, payload):
 
 
 _PCT_RE = re.compile(r"\[\s*(\d+)%\]")
-_ERR_RE = re.compile(r"error:|undefined reference|No rule to make|\bfatal\b|\*\*\* ", re.I)
+# Real compiler/linker/make diagnostics — not "error:" inside a printf string.
+# gcc prints "file:line:col: error:"; the leading ": " avoids matching string literals.
+_ERR_RE = re.compile(r": error:|: fatal error:|undefined reference|No rule to make target|\*\*\* \[|recipe for target", re.I)
 
 
 def stream_build(wfile, cmd, cwd):
@@ -342,30 +344,38 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self._sse_headers()
 
-            # The flasher needs exclusive access. If something else holds the port
-            # (a serial monitor, a previous run), bail out early with a clear note —
-            # otherwise the ROM handshake fails in confusing ways.
-            if not port_is_free(port):
-                sse_send(self.wfile, "done", {"code": -1, "ok": False,
-                         "msg": "Port %s is busy — close the serial log / monitor holding it and retry." % port})
-                return
-            # Drain stale bytes (boot-log tail / previous session) that can break ucfg.
-            flush_port(port)
-
+            # NOTE: we do NOT open/flush the port here before flashing — opening a
+            # cu.* device toggles DTR/RTS and can disturb a board sitting in UART
+            # download mode. uartfwburn opens it itself; if the port is genuinely
+            # held, its "ping fail" output is caught by the diagnosis below.
+            baud_choice = q.get("baud", ["auto"])[0]
             if mode == "app":
                 img = os.path.join(IMAGES, "firmware_ntz.bin")
-                attempts = [("115200", "1", ["-s", "0x60000"])]
+                base_extra = ["-s", "0x60000"]
+                sweep = ["115200"]                       # partial app is 115200 only
             else:
                 img = os.path.join(IMAGES, "flash_ntz.bin")
-                # same baud sweep as flash.sh: 2M -> 921600 -> 115200
-                attempts = [("2000000", "32", ["-U"]), ("921600", "8", ["-U"]), ("115200", "1", ["-U"])]
+                base_extra = ["-U"]
+                sweep = ["2000000", "921600", "115200"]  # fast -> reliable
+
+            # A specific baud = ONE clean attempt. The auto sweep can poison the
+            # ROM session (each failed high-baud attempt wedges it), so on a flaky
+            # CH340G picking 115200 explicitly is the reliable path.
+            if baud_choice != "auto":
+                sweep = [baud_choice]
+
+            def x_for(b):
+                b = int(b)
+                return "32" if b >= 1000000 else ("8" if b >= 460800 else "1")
+            attempts = [(b, x_for(b), base_extra) for b in sweep]
+
             if not os.path.exists(img):
                 sse_send(self.wfile, "done", {"code": -1, "ok": False,
                          "msg": "Image not found — build it first (%s)." % os.path.basename(img)})
                 return
             ok = False
             seen = []   # lowercased flasher output, for token-based diagnosis
-            for baud, x, extra in attempts:
+            for i, (baud, x, extra) in enumerate(attempts):
                 cmd = [burn, "-p", port, "-f", img, "-b", baud] + extra + ["-x", x]
                 sse_send(self.wfile, "line", {"text": ">>> attempt baud=%s -x %s" % (baud, x)})
                 proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE,
@@ -379,7 +389,8 @@ class Handler(BaseHTTPRequestHandler):
                 if proc.returncode == 0:
                     ok = True
                     break
-                sse_send(self.wfile, "line", {"text": ">>> baud=%s failed, trying slower..." % baud})
+                if i < len(attempts) - 1:
+                    sse_send(self.wfile, "line", {"text": ">>> baud=%s failed, trying slower..." % baud})
 
             if ok:
                 msg = "DONE. Now press RESET on the board manually — the AMB82-mini does not reset itself."
@@ -387,11 +398,14 @@ class Handler(BaseHTTPRequestHandler):
                 blob = " ".join(seen)
                 if "ping ok" in blob and ("ucfg fail" in blob or "download fail" in blob):
                     # Board IS in download mode, but the ROM/adapter handshake failed.
+                    rate = "non-standard rate" in blob
                     msg = ("Board IS in download mode (ping ok) but the download handshake failed "
-                           "(ucfg/download fail). The AmebaPro2 ROM accepts ONE clean attempt per "
-                           "download-mode entry: RE-ENTER it (hold UART DOWNLOAD, tap RESET, release) "
-                           "and flash again. If it still fails, UNPLUG/REPLUG the USB cable to "
-                           "re-enumerate the CH340G adapter, then re-enter download mode.")
+                           "(ucfg/download fail). " +
+                           ("Your CH340G reported 'non-standard rate' — it can't hold the high bauds; "
+                            "set Baud = 115200 (single attempt) and try once more. " if rate else "") +
+                           "The AmebaPro2 ROM accepts ONE clean attempt per download-mode entry, so "
+                           "RE-ENTER it (re-enter download mode / reboot the board) before each retry. "
+                           "If it still fails, UNPLUG/REPLUG the USB cable to re-enumerate the adapter.")
                 elif ("ping fail" in blob or "open fail" in blob or "boot fail" in blob):
                     msg = ("Board did NOT respond (ping fail) — it is not in UART DOWNLOAD mode, or the "
                            "port is busy. Re-enter download mode (hold UART DOWNLOAD, tap RESET, "

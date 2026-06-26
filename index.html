@@ -102,6 +102,13 @@
         <option value="full">full — flash_ntz.bin (fast)</option>
         <option value="app">app — firmware_ntz.bin (slow, no bootloader)</option>
       </select>
+      <label style="margin-top:8px">Baud</label>
+      <select id="flashBaud">
+        <option value="auto">Auto sweep (2M → 921k → 115200)</option>
+        <option value="115200">115200 — single attempt (reliable on CH340G)</option>
+        <option value="921600">921600 — single attempt</option>
+        <option value="2000000">2000000 — single attempt (fast, flaky on CH340G)</option>
+      </select>
       <div class="memo">
         <b>Enter UART DOWNLOAD mode</b> (the panel can't press the buttons):
         <ol>
@@ -267,11 +274,12 @@ $("#btnUart").onclick = async () => {
 // ── flash ──
 $("#btnFlash").onclick = () => {
   const mode = $("#flashMode").value;
+  const baud = $("#flashBaud").value;
   const bar = $("#barFlash"), fill = bar.querySelector("i");
   $("#btnFlash").disabled=true; bar.classList.add("indet"); fill.style.width="";
   setStatus($("#stFlash"),"flashing… (board must be in UART DOWNLOAD mode)","warn");
-  log(`\n=== FLASH: ${mode} ===`, "l-cmd");
-  runStream(`/api/flash?mode=${mode}`, {
+  log(`\n=== FLASH: ${mode} @ ${baud} ===`, "l-cmd");
+  runStream(`/api/flash?mode=${mode}&baud=${baud}`, {
     onLine: d => { log(d.text); const p = anyPct(d.text);
       if (p!==null){ bar.classList.remove("indet"); fill.style.width=p+"%"; } },
     onDone: d => {
