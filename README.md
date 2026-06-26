@@ -14,7 +14,9 @@ It wraps the toolchain you already use (`build_freertos.sh` / `build_test.sh`, t
 2. **Build** — runs the build script; shows a progress bar and the result.
 3. **Check UART** — finds the USB-serial port and tells you if it is free.
 4. **Flash** — calls `uartfwburn` (single clean attempt at a chosen baud; default 115200,
-   since the multi-baud sweep can wedge the AmebaPro2 ROM).
+   since the multi-baud sweep can wedge the AmebaPro2 ROM). Each build's image is also copied
+   into the selected target's folder (`TEST/<id>/flash_ntz.bin`), so a target's existing image
+   can be re-flashed without rebuilding; the panel shows whether an image is present and when it was built.
 5. **Serial log** — streams the board's UART output to the page and to a file, with optional
    per-line timestamps and rotating per-session logs.
 
@@ -50,8 +52,9 @@ needs the server for its API (it will tell you so if opened as a file).
   - `GET /api/targets` — list build targets (`full` + `TEST/*/test.cmake`)
   - `GET /api/build?target=…` — run the build; stream **progress %** and errors only
   - `GET /api/uart` — is the serial port present and free?
-  - `GET /api/flash?mode=full|app` — flash via `uartfwburn`, baud sweep
-  - `GET /api/serial?autolog=0|1` / `POST /api/serial/stop` — read the port, write a log
+  - `GET /api/image-status?target=…&mode=…` — is there a built image to flash, and when built?
+  - `GET /api/flash?mode=…&baud=…&target=…` — flash the target's image via `uartfwburn`
+  - `GET /api/serial?autolog=0|1&ts=0|1&target=…` / `POST /api/serial/stop` — read the port, write a log
   - `POST /api/save-log` — save the current output panel to `LOG/log_<timestamp>.txt`
 - `index.html` — a single static page, no framework.
 
@@ -85,6 +88,22 @@ output panel is meant for the **serial** stream.
   wired (CMake scenario → `TEST_CMAKE` / app sources), and how to add an incremental test.
 - [`docs/agent_file_hygiene.md`](docs/agent_file_hygiene.md) — file/environment hygiene
   rules (useful when a coding agent drives the build).
+
+## Adapter / USB-UART notes
+
+Developed with an **external CH340G** wired to the board's UART pins (signal + GND only — the
+board runs on its own battery, so no shared USB power). A few hard-won notes:
+
+- **Prefer 115200.** On macOS the CH340G reports `non-standard rate` at 2M/921600 and fails;
+  and because the ROM accepts only one download attempt per entry, that first failure then
+  wedges the session so even a later 115200 attempt fails. A single clean **115200** attempt
+  is the reliable path — and the default. Use higher bauds only if your adapter handles them.
+- **One attempt per download-mode entry.** If a flash fails, re-enter download mode
+  (RESET + UART DOWNLOAD together, or reboot the board) before the next try — don't just press
+  Flash again. If the adapter stays wedged, power-cycle it (and the board).
+- **Reliability ranking (macOS, high/odd bauds):** FTDI FT232RL / FT231X (best) > CP2102 /
+  CP2104 > CH9102 > CH340G. An FTDI/CP210x on the same UART pins (TX/RX/GND, leave VCC
+  disconnected) is a drop-in upgrade if you need fast flashing.
 
 ## Requirements
 

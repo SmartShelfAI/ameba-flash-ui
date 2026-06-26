@@ -23,6 +23,7 @@ import json
 import os
 import re
 import select
+import shutil
 import subprocess
 import sys
 import termios
@@ -116,6 +117,31 @@ def target_log_dir(target):
     return os.path.join(ROOT, "LOG")
 
 
+def target_dir(target):
+    """The folder of a build target — TEST/<id> for a valid test, else <ROOT>.
+
+    Built images are also copied here so each target keeps its own flashable
+    image (TEST/<id>/flash_ntz.bin) instead of only the shared images/ copy,
+    which a later build of another target would overwrite. Validation against an
+    existing test dir blocks path traversal from the client-supplied target.
+    """
+    if target and target != "full":
+        d = os.path.join(ROOT, "TEST", target)
+        if os.path.isdir(d) and os.path.exists(os.path.join(d, "test.cmake")):
+            return d
+    return ROOT
+
+
+def resolve_image(target, basename):
+    """Path of the image to flash for a target: prefer the target's own copy,
+    fall back to the shared images/ copy."""
+    if target and target != "full":
+        cand = os.path.join(target_dir(target), basename)
+        if os.path.exists(cand):
+            return cand
+    return os.path.join(IMAGES, basename)
+
+
 def now_hms_ms():
     """Local wall-clock 'HH:MM:SS.mmm' for serial line timestamps."""
     t = time.time()
@@ -197,8 +223,9 @@ def stream_build(wfile, cmd, cwd):
     the build log). We emit:
       - 'progress' events when the cmake/make percentage changes,
       - 'line' events only for error-looking lines (capped),
-      - on failure, the last ~30 lines so the cause is visible,
-      - a final 'done' with the exit code.
+      - on failure, the last ~30 lines so the cause is visible.
+    Returns the process exit code, or None if the client disconnected mid-build.
+    The caller emits the final 'done' (after any post-build image copy).
     """
     proc = subprocess.Popen(
         cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -219,7 +246,7 @@ def stream_build(wfile, cmd, cwd):
                     last_pct = p
                     if not sse_send(wfile, "progress", {"pct": p}):
                         proc.kill()
-                        return
+                        return None
                 continue
             if _ERR_RE.search(line) and err_sent < ERR_CAP:
                 err_sent += 1
@@ -228,12 +255,11 @@ def stream_build(wfile, cmd, cwd):
     finally:
         if proc.poll() is None:
             proc.kill()
-    ok = proc.returncode == 0
-    if not ok:
+    if proc.returncode != 0:
         sse_send(wfile, "line", {"text": "--- last build lines ---"})
         for l in tail:
             sse_send(wfile, "line", {"text": l})
-    sse_send(wfile, "done", {"code": proc.returncode, "ok": ok})
+    return proc.returncode
 
 
 # ── Request handler ──────────────────────────────────────────────────────────
@@ -288,6 +314,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.api_targets()
         if u.path == "/api/uart":
             return self.api_uart()
+        if u.path == "/api/image-status":
+            return self.api_image_status(parse_qs(u.query))
         if u.path == "/api/build":
             return self.api_build(parse_qs(u.query))
         if u.path == "/api/flash":
@@ -313,6 +341,18 @@ class Handler(BaseHTTPRequestHandler):
             if os.path.isdir(d) and os.path.exists(os.path.join(d, "test.cmake")):
                 targets.append({"id": name, "label": "TEST/" + name})
         self._json({"targets": targets})
+
+    def api_image_status(self, q):
+        # Is there an already-built image to flash for this target/mode?
+        target = q.get("target", ["full"])[0]
+        mode = q.get("mode", ["full"])[0]
+        basename = "firmware_ntz.bin" if mode == "app" else "flash_ntz.bin"
+        path = resolve_image(target, basename)
+        if os.path.exists(path):
+            built = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(path)))
+            self._json({"exists": True, "rel": os.path.relpath(path, ROOT), "built": built})
+        else:
+            self._json({"exists": False, "rel": os.path.relpath(path, ROOT)})
 
     def api_uart(self):
         port = find_port()
@@ -341,12 +381,33 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 cmd = [os.path.join(ROOT, "build_test.sh"), target]
             self._sse_headers()
-            stream_build(self.wfile, cmd, ROOT)
+            rc = stream_build(self.wfile, cmd, ROOT)
+            if rc is None:
+                return  # client disconnected mid-build
+            # On success, copy the freshly built images into the target's own
+            # folder so each target keeps a flashable copy (images/ gets
+            # overwritten by the next build of a different target).
+            if rc == 0 and target != "full":
+                tdir = target_dir(target)
+                if tdir != ROOT:
+                    saved = []
+                    for fn in ("flash_ntz.bin", "firmware_ntz.bin"):
+                        src = os.path.join(IMAGES, fn)
+                        if os.path.exists(src):
+                            try:
+                                shutil.copy2(src, os.path.join(tdir, fn))
+                                saved.append(os.path.relpath(os.path.join(tdir, fn), ROOT))
+                            except OSError:
+                                pass
+                    if saved:
+                        sse_send(self.wfile, "line", {"text": "saved image → " + ", ".join(saved)})
+            sse_send(self.wfile, "done", {"code": rc, "ok": rc == 0})
         finally:
             STATE["lock"].release()
 
     def api_flash(self, q):
         mode = q.get("mode", ["full"])[0]
+        target = q.get("target", ["full"])[0]
         if STATE["serial_active"]:
             self._sse_headers()
             sse_send(self.wfile, "done", {"code": -1, "ok": False,
@@ -372,13 +433,16 @@ class Handler(BaseHTTPRequestHandler):
             # held, its "ping fail" output is caught by the diagnosis below.
             baud_choice = q.get("baud", ["auto"])[0]
             if mode == "app":
-                img = os.path.join(IMAGES, "firmware_ntz.bin")
+                basename = "firmware_ntz.bin"
                 base_extra = ["-s", "0x60000"]
                 sweep = ["115200"]                       # partial app is 115200 only
             else:
-                img = os.path.join(IMAGES, "flash_ntz.bin")
+                basename = "flash_ntz.bin"
                 base_extra = ["-U"]
                 sweep = ["2000000", "921600", "115200"]  # fast -> reliable
+
+            # Flash the selected target's own image if it has one, else images/.
+            img = resolve_image(target, basename)
 
             # A specific baud = ONE clean attempt. The auto sweep can poison the
             # ROM session (each failed high-baud attempt wedges it), so on a flaky
@@ -395,6 +459,7 @@ class Handler(BaseHTTPRequestHandler):
                 sse_send(self.wfile, "done", {"code": -1, "ok": False,
                          "msg": "Image not found — build it first (%s)." % os.path.basename(img)})
                 return
+            sse_send(self.wfile, "line", {"text": "image: %s" % os.path.relpath(img, ROOT)})
             ok = False
             seen = []   # lowercased flasher output, for token-based diagnosis
             for i, (baud, x, extra) in enumerate(attempts):

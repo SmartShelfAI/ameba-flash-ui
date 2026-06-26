@@ -130,7 +130,8 @@
           <b>ping fail:</b> the board isn't in download mode (or the port is busy) — redo steps&nbsp;1–4.
         </details>
       </div>
-      <div class="row" style="margin-top:10px">
+      <div class="status" id="stImage"></div>
+      <div class="row" style="margin-top:6px">
         <button id="btnFlash" class="primary">⚡ Flash</button>
       </div>
       <div class="bar" id="barFlash"><i></i></div>
@@ -240,6 +241,25 @@ async function loadTargets() {
   }
 }
 
+// ── image status (is there a built image to flash for this target?) ──
+async function refreshImageStatus() {
+  const target = $("#target").value, mode = $("#flashMode").value;
+  if (!target) return;
+  try {
+    const r = await fetch(`/api/image-status?target=${encodeURIComponent(target)}&mode=${mode}`);
+    const j = await r.json();
+    if (j.exists) {
+      setStatus($("#stImage"), `image: ${j.rel} (built ${j.built})`, "ok");
+      $("#btnFlash").disabled = false;
+    } else {
+      setStatus($("#stImage"), `no image for this target — Build first`, "warn");
+      $("#btnFlash").disabled = true;
+    }
+  } catch (e) { setStatus($("#stImage"), "", ""); }
+}
+$("#target").onchange = refreshImageStatus;
+$("#flashMode").onchange = refreshImageStatus;
+
 // ── build ──
 $("#btnBuild").onclick = () => {
   const target = $("#target").value;
@@ -256,7 +276,7 @@ $("#btnBuild").onclick = () => {
     onDone: d => {
       bar.classList.remove("indet"); fill.style.width = d.ok ? "100%":fill.style.width;
       $("#btnBuild").disabled=false;
-      if (d.ok){ setStatus($("#stBuild"),"✓ build succeeded → images/","ok"); }
+      if (d.ok){ setStatus($("#stBuild"),"✓ build succeeded → images/","ok"); refreshImageStatus(); }
       else { setStatus($("#stBuild"),`✗ failed (code ${d.code}) ${d.msg||""}`,"err"); }
     }
   });
@@ -283,7 +303,7 @@ $("#btnFlash").onclick = () => {
   $("#btnFlash").disabled=true; bar.classList.add("indet"); fill.style.width="";
   setStatus($("#stFlash"),"flashing… (board must be in UART DOWNLOAD mode)","warn");
   log(`\n=== FLASH: ${mode} @ ${baud} ===`, "l-cmd");
-  runStream(`/api/flash?mode=${mode}&baud=${baud}`, {
+  runStream(`/api/flash?mode=${mode}&baud=${baud}&target=${encodeURIComponent($("#target").value)}`, {
     onLine: d => { log(d.text); const p = anyPct(d.text);
       if (p!==null){ bar.classList.remove("indet"); fill.style.width=p+"%"; } },
     onDone: d => {
@@ -314,7 +334,7 @@ $("#btnSerial").onclick = () => {
 $("#btnSerialStop").onclick = async () => { await fetch("/api/serial/stop",{method:"POST"}); };
 
 $("#btnClear").onclick = () => { logBuf.length = 0; logEl.innerHTML=""; };
-$("#btnReload").onclick = () => loadTargets();
+$("#btnReload").onclick = () => loadTargets().then(refreshImageStatus);
 // Copy the visible output (capped at LOG_MAX lines) to the clipboard.
 // Bounded by design, so size is never a problem; 127.0.0.1 is a secure context
 // so the Clipboard API is available, with an execCommand fallback just in case.
@@ -348,7 +368,7 @@ $("#btnSave").onclick = async () => {
     else { setStatus($("#stSerial"), "save failed: " + (j.msg||""), "err"); }
   } catch (e) { setStatus($("#stSerial"), "save failed: " + e.message, "err"); }
 };
-loadTargets();
+loadTargets().then(refreshImageStatus);
 </script>
 </body>
 </html>
