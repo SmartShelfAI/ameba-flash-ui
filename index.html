@@ -115,9 +115,8 @@
           <li>If a serial log is running, stop it — the <b>■ Stop</b> button in step 6
               (Serial log). It's greyed out when nothing is running. Also close any external
               monitor (Arduino IDE / <code>screen</code>) holding the port.</li>
-          <li>Hold <b>UART&nbsp;DOWNLOAD</b>.</li>
-          <li>Tap <b>RESET</b> and release it.</li>
-          <li>Release <b>UART&nbsp;DOWNLOAD</b> ~1&nbsp;s later.</li>
+          <li>Press both board buttons together — <b>RESET</b> and <b>UART&nbsp;DOWNLOAD</b>
+              (the button next to the blue <b>LED-B</b>), then release.</li>
         </ol>
         Blue&nbsp;LED steady = in download mode → press <b>⚡ Flash</b>.
         After <i>download success</i>, press <b>RESET</b> once to run the firmware.
@@ -125,7 +124,8 @@
           <summary>If flashing fails</summary>
           <b>ping ok → ucfg/download fail:</b> the board is in download mode but the ROM
           half-negotiated. It accepts <b>one attempt per entry</b> — re-enter download mode
-          (steps&nbsp;2–4) and flash again. Still failing? <b>Unplug &amp; replug the USB</b>
+          (RESET + UART DOWNLOAD again, or just reboot the board) and flash again. If you see
+          <b>non-standard rate</b>, set <b>Baud = 115200</b> above. Still failing? <b>Unplug &amp; replug the USB</b>
           cable (re-enumerates the CH340G), then re-enter download mode.<br>
           <b>ping fail:</b> the board isn't in download mode (or the port is busy) — redo steps&nbsp;1–4.
         </details>
@@ -148,7 +148,7 @@
         Auto-log session → <code>LOG/</code> (full, rotating @10 MB)
       </label>
       <div class="status" id="stSerial"></div>
-      <div class="hint">Off: one file in <code>logs/</code>. On: full session to
+      <div class="hint">Off: one file in <code>logs/</code>. On: full session to the target's
         <code>LOG/session&lt;NN&gt;_&lt;date&gt;_part&lt;NN&gt;.log</code>. Stop it before flashing — one port only.</div>
     </div>
 
@@ -297,7 +297,7 @@ $("#btnSerial").onclick = () => {
   const auto = $("#autolog").checked ? "1" : "0";
   setStatus($("#stSerial"), auto==="1" ? "reading port… (auto-log on)" : "reading port…", "warn");
   log("\n=== SERIAL @115200 ===","l-cmd");
-  runStream(`/api/serial?autolog=${auto}`, {
+  runStream(`/api/serial?autolog=${auto}&target=${encodeURIComponent($("#target").value)}`, {
     onLine: d => log(d.text),
     onDone: d => {
       $("#btnSerial").disabled=false; $("#btnSerialStop").disabled=true;
@@ -336,7 +336,8 @@ $("#btnSave").onclick = async () => {
   if (!text.trim()) { setStatus($("#stSerial"), "nothing to save yet", "warn"); return; }
   try {
     const r = await fetch("/api/save-log", { method:"POST",
-      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ text }) });
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ text, target: $("#target").value }) });
     const j = await r.json();
     if (j.ok) { setStatus($("#stSerial"), "saved → " + j.path, "ok"); log("✓ saved → " + j.path, "l-ok"); }
     else { setStatus($("#stSerial"), "save failed: " + (j.msg||""), "err"); }

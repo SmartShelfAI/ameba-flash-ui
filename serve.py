@@ -101,6 +101,21 @@ def find_port():
     return ports[-1] if ports else None
 
 
+def target_log_dir(target):
+    """LOG/ folder for a build target — logs land next to what was compiled.
+
+    'full' / empty / unknown -> <ROOT>/LOG
+    a valid test id          -> <ROOT>/TEST/<id>/LOG
+    Only an existing TEST/<id> (with test.cmake) is accepted, which also blocks
+    path traversal from the client-supplied target.
+    """
+    if target and target != "full":
+        d = os.path.join(ROOT, "TEST", target)
+        if os.path.isdir(d) and os.path.exists(os.path.join(d, "test.cmake")):
+            return os.path.join(d, "LOG")
+    return os.path.join(ROOT, "LOG")
+
+
 def port_is_free(port):
     """True if the tty can be opened (not held by screen/picocom/flasher)."""
     try:
@@ -431,8 +446,8 @@ class Handler(BaseHTTPRequestHandler):
 
         stamp = time.strftime("%Y%m%d_%H%M%S")
         if autolog:
-            # Full session log into <PROJECT_ROOT>/LOG/, rotated into numbered parts.
-            save_dir = os.path.join(ROOT, "LOG")
+            # Full session log into the selected target's LOG/, rotated by size.
+            save_dir = target_log_dir(q.get("target", ["full"])[0])
             os.makedirs(save_dir, exist_ok=True)
             STATE["session_counter"] += 1
             sess = STATE["session_counter"]
@@ -491,13 +506,13 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"stopped": True})
 
     def api_save_log(self):
-        # Save the current output panel text into <PROJECT_ROOT>/LOG/ with a
-        # timestamped filename. ROOT is the folder the build runs from.
+        # Save the current output panel text into the selected target's LOG/
+        # folder (TEST/<id>/LOG, or <ROOT>/LOG for the full app), timestamped.
         body = self._read_body()
         text = body.get("text", "")
         if not text.strip():
             return self._json({"ok": False, "msg": "nothing to save"}, 400)
-        save_dir = os.path.join(ROOT, "LOG")
+        save_dir = target_log_dir(body.get("target", "full"))
         try:
             os.makedirs(save_dir, exist_ok=True)
             stamp = time.strftime("%Y%m%d_%H%M%S")
