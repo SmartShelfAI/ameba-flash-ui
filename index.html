@@ -46,6 +46,11 @@
   .pill.ok{color:var(--ok);border-color:#27502f} .pill.err{color:var(--err);border-color:#5a2a2a}
   .memo { background:#1a1f0d; border:1px solid #3a3a1a; color:#e8e6c0; border-radius:8px;
           padding:10px; font-size:12.5px; margin-top:10px; }
+  .memo ol { margin:6px 0; padding-left:18px; }
+  .memo li { margin:1px 0; }
+  .memo details { margin-top:8px; border-top:1px solid #3a3a1a; padding-top:6px; }
+  .memo summary { cursor:pointer; color:var(--warn); font-weight:600; }
+  .memo details[open] summary { margin-bottom:4px; }
   .right h2 { flex:none; margin:0; padding:12px 16px; font-size:13px; color:var(--mut);
               border-bottom:1px solid var(--line); display:flex; justify-content:space-between; }
   #log { flex:1; min-height:0; margin:0; padding:12px 16px; overflow:auto; white-space:pre-wrap;
@@ -98,8 +103,23 @@
         <option value="app">app — firmware_ntz.bin (slow, no bootloader)</option>
       </select>
       <div class="memo">
-        Before flashing put the board into <b>UART DOWNLOAD</b>: stop the serial log;
-        hold <b>UART DOWNLOAD</b>; tap <b>RESET</b>; release DOWNLOAD after ~1 s.
+        <b>Enter UART DOWNLOAD mode</b> (the panel can't press the buttons):
+        <ol>
+          <li>Stop the serial log above (free the port).</li>
+          <li>Hold <b>UART&nbsp;DOWNLOAD</b>.</li>
+          <li>Tap <b>RESET</b> and release it.</li>
+          <li>Release <b>UART&nbsp;DOWNLOAD</b> ~1&nbsp;s later.</li>
+        </ol>
+        Blue&nbsp;LED steady = in download mode → press <b>⚡ Flash</b>.
+        After <i>download success</i>, press <b>RESET</b> once to run the firmware.
+        <details>
+          <summary>If flashing fails</summary>
+          <b>ping ok → ucfg/download fail:</b> the board is in download mode but the ROM
+          half-negotiated. It accepts <b>one attempt per entry</b> — re-enter download mode
+          (steps&nbsp;2–4) and flash again. Still failing? <b>Unplug &amp; replug the USB</b>
+          cable (re-enumerates the CH340G), then re-enter download mode.<br>
+          <b>ping fail:</b> the board isn't in download mode (or the port is busy) — redo steps&nbsp;1–4.
+        </details>
       </div>
       <div class="row" style="margin-top:10px">
         <button id="btnFlash" class="primary">⚡ Flash</button>
