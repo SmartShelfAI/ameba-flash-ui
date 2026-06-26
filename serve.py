@@ -111,6 +111,24 @@ def port_is_free(port):
         return False
 
 
+def flush_port(port):
+    """Drain any stale bytes sitting in the tty buffers before flashing.
+
+    A leftover boot-log tail or bytes from a previous serial session can confuse
+    the AmebaPro2 ROM 'ucfg' handshake. Flushing both directions is cheap and
+    harmless. Returns True if the port could be opened+flushed.
+    """
+    try:
+        fd = os.open(port, os.O_RDWR | os.O_NONBLOCK | os.O_NOCTTY)
+        try:
+            termios.tcflush(fd, termios.TCIOFLUSH)
+        finally:
+            os.close(fd)
+        return True
+    except OSError:
+        return False
+
+
 def configure_tty(fd, baud=115200):
     """Put the tty into raw 8N1 at `baud` ON THE FD WE READ FROM.
 
@@ -323,6 +341,17 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             self._sse_headers()
+
+            # The flasher needs exclusive access. If something else holds the port
+            # (a serial monitor, a previous run), bail out early with a clear note —
+            # otherwise the ROM handshake fails in confusing ways.
+            if not port_is_free(port):
+                sse_send(self.wfile, "done", {"code": -1, "ok": False,
+                         "msg": "Port %s is busy — close the serial log / monitor holding it and retry." % port})
+                return
+            # Drain stale bytes (boot-log tail / previous session) that can break ucfg.
+            flush_port(port)
+
             if mode == "app":
                 img = os.path.join(IMAGES, "firmware_ntz.bin")
                 attempts = [("115200", "1", ["-s", "0x60000"])]
@@ -335,12 +364,14 @@ class Handler(BaseHTTPRequestHandler):
                          "msg": "Image not found — build it first (%s)." % os.path.basename(img)})
                 return
             ok = False
+            seen = []   # lowercased flasher output, for token-based diagnosis
             for baud, x, extra in attempts:
                 cmd = [burn, "-p", port, "-f", img, "-b", baud] + extra + ["-x", x]
                 sse_send(self.wfile, "line", {"text": ">>> attempt baud=%s -x %s" % (baud, x)})
                 proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, bufsize=1, universal_newlines=True)
                 for line in proc.stdout:
+                    seen.append(line.lower())
                     if not sse_send(self.wfile, "line", {"text": line.rstrip()}):
                         proc.kill()
                         return
@@ -349,11 +380,25 @@ class Handler(BaseHTTPRequestHandler):
                     ok = True
                     break
                 sse_send(self.wfile, "line", {"text": ">>> baud=%s failed, trying slower..." % baud})
-            sse_send(self.wfile, "done", {
-                "code": 0 if ok else 1, "ok": ok,
-                "msg": "DONE. Now press RESET on the board manually — the AMB82-mini does not reset itself."
-                       if ok else "Flashing failed. Make sure the board is in UART DOWNLOAD mode and retry.",
-            })
+
+            if ok:
+                msg = "DONE. Now press RESET on the board manually — the AMB82-mini does not reset itself."
+            else:
+                blob = " ".join(seen)
+                if "ping ok" in blob and ("ucfg fail" in blob or "download fail" in blob):
+                    # Board IS in download mode, but the ROM/adapter handshake failed.
+                    msg = ("Board IS in download mode (ping ok) but the download handshake failed "
+                           "(ucfg/download fail). The AmebaPro2 ROM accepts ONE clean attempt per "
+                           "download-mode entry: RE-ENTER it (hold UART DOWNLOAD, tap RESET, release) "
+                           "and flash again. If it still fails, UNPLUG/REPLUG the USB cable to "
+                           "re-enumerate the CH340G adapter, then re-enter download mode.")
+                elif ("ping fail" in blob or "open fail" in blob or "boot fail" in blob):
+                    msg = ("Board did NOT respond (ping fail) — it is not in UART DOWNLOAD mode, or the "
+                           "port is busy. Re-enter download mode (hold UART DOWNLOAD, tap RESET, "
+                           "release) and retry.")
+                else:
+                    msg = "Flashing failed. Re-enter UART DOWNLOAD mode (and replug USB if it persists), then retry."
+            sse_send(self.wfile, "done", {"code": 0 if ok else 1, "ok": ok, "msg": msg})
         finally:
             STATE["lock"].release()
 
