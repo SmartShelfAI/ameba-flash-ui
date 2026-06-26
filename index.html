@@ -114,8 +114,13 @@
         <button id="btnSerial">▶ Start log</button>
         <button id="btnSerialStop" class="danger" disabled>■ Stop</button>
       </div>
+      <label style="display:flex;align-items:center;gap:7px;margin-top:9px;cursor:pointer">
+        <input type="checkbox" id="autolog" style="width:auto;cursor:pointer">
+        Auto-log session → <code>LOG/</code> (full, rotating @10 MB)
+      </label>
       <div class="status" id="stSerial"></div>
-      <div class="hint">Written to <code>logs/serial_&lt;date&gt;.log</code>. Stop it before flashing — there is only one port.</div>
+      <div class="hint">Off: one file in <code>logs/</code>. On: full session to
+        <code>LOG/session&lt;NN&gt;_&lt;date&gt;_part&lt;NN&gt;.log</code>. Stop it before flashing — one port only.</div>
     </div>
 
   </div>
@@ -259,9 +264,10 @@ $("#btnFlash").onclick = () => {
 // ── serial ──
 $("#btnSerial").onclick = () => {
   $("#btnSerial").disabled=true; $("#btnSerialStop").disabled=false;
-  setStatus($("#stSerial"),"reading port…","warn");
+  const auto = $("#autolog").checked ? "1" : "0";
+  setStatus($("#stSerial"), auto==="1" ? "reading port… (auto-log on)" : "reading port…", "warn");
   log("\n=== SERIAL @115200 ===","l-cmd");
-  runStream("/api/serial", {
+  runStream(`/api/serial?autolog=${auto}`, {
     onLine: d => log(d.text),
     onDone: d => {
       $("#btnSerial").disabled=false; $("#btnSerialStop").disabled=true;

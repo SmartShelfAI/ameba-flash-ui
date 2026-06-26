@@ -47,16 +47,19 @@ needs the server for its API (it will tell you so if opened as a file).
   - `GET /api/build?target=…` — run the build; stream **progress %** and errors only
   - `GET /api/uart` — is the serial port present and free?
   - `GET /api/flash?mode=full|app` — flash via `uartfwburn`, baud sweep
-  - `GET /api/serial` / `POST /api/serial/stop` — read the port, tee to `logs/`
+  - `GET /api/serial?autolog=0|1` / `POST /api/serial/stop` — read the port, write a log
   - `POST /api/save-log` — save the current output panel to `LOG/log_<timestamp>.txt`
 - `index.html` — a single static page, no framework.
 
 The output panel is capped at the last 2000 lines (so the tab never bloats). **⧉ copy**
 puts that visible text on the clipboard; **⤓ save** writes it to a `LOG/` subfolder in the
-project root (where the build runs), with a timestamped filename — handy for keeping a
-specific run. Both are bounded by the cap, so size is never an issue. The serial stream is
-*also* auto-saved in full to `logs/serial_<date>.log` while it runs — use that file if you
-need the complete session.
+project root (where the build runs), with a timestamped filename. Both are bounded by the
+cap, so size is never an issue.
+
+**Auto-log session** (a checkbox in the serial step): when on, the *full* serial stream of
+that session is written to `LOG/session<NN>_<date>_part<NN>.log` — a per-session counter,
+the start timestamp, and a part number that rolls over every 10 MB so long runs stay in
+manageable files. When off, the stream is logged to a single `logs/serial_<date>.log`.
 
 The **full build log is intentionally not streamed** to the browser: a full SDK build
 prints tens of thousands of lines and would crash the tab. The build step shows only

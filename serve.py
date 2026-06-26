@@ -47,7 +47,48 @@ STATE = {
     "lock": threading.Lock(),     # guards "busy" op (build OR flash)
     "serial_active": False,       # a serial reader is holding the port
     "serial_stop": None,          # threading.Event to stop the reader
+    "session_counter": 0,         # increments per auto-log serial session
 }
+
+# Auto-log rotation: start a new numbered part when the current one exceeds this.
+ROTATE_BYTES = 10 * 1024 * 1024   # 10 MB
+
+
+class RotatingWriter:
+    """Append-only writer that rolls over to a new numbered part by size.
+
+    rotate=False -> a single "<base>.log".
+    rotate=True  -> "<base>_part01.log", "<base>_part02.log", ... rolling at `limit`.
+    """
+    def __init__(self, base, rotate, limit):
+        self.base, self.rotate, self.limit = base, rotate, limit
+        self.part, self.written, self.f, self.path = 1, 0, None, None
+        self._open()
+
+    def _open(self):
+        self.path = ("%s_part%02d.log" % (self.base, self.part)) if self.rotate else (self.base + ".log")
+        self.f = open(self.path, "ab")
+
+    def write(self, chunk):
+        if self.rotate and self.written and self.written + len(chunk) > self.limit:
+            self.f.close()
+            self.part += 1
+            self.written = 0
+            self._open()
+        self.f.write(chunk)
+        self.f.flush()
+        self.written += len(chunk)
+
+    def close(self):
+        if self.f:
+            self.f.close()
+            self.f = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
 
 def burn_binary():
@@ -210,7 +251,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/flash":
             return self.api_flash(parse_qs(u.query))
         if u.path == "/api/serial":
-            return self.api_serial()
+            return self.api_serial(parse_qs(u.query))
         return self._json({"error": "unknown route"}, 404)
 
     def do_POST(self):
@@ -316,7 +357,9 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             STATE["lock"].release()
 
-    def api_serial(self):
+    def api_serial(self, q=None):
+        q = q or {}
+        autolog = q.get("autolog", ["0"])[0] == "1"
         if STATE["serial_active"]:
             self._sse_headers()
             sse_send(self.wfile, "done", {"ok": False, "msg": "Serial is already being read."})
@@ -326,15 +369,29 @@ class Handler(BaseHTTPRequestHandler):
             self._sse_headers()
             sse_send(self.wfile, "done", {"ok": False, "msg": "Port not found."})
             return
-        os.makedirs(LOGDIR, exist_ok=True)
+
         stamp = time.strftime("%Y%m%d_%H%M%S")
-        logpath = os.path.join(LOGDIR, "serial_%s.log" % stamp)
+        if autolog:
+            # Full session log into <PROJECT_ROOT>/LOG/, rotated into numbered parts.
+            save_dir = os.path.join(ROOT, "LOG")
+            os.makedirs(save_dir, exist_ok=True)
+            STATE["session_counter"] += 1
+            sess = STATE["session_counter"]
+            base = os.path.join(save_dir, "session%02d_%s" % (sess, stamp))
+            rotate = True
+            banner = "[serial] %s @115200 -> %s_part01.log (auto-log session %02d, rotating @%dMB)" % (
+                port, base, sess, ROTATE_BYTES // (1024 * 1024))
+        else:
+            os.makedirs(LOGDIR, exist_ok=True)
+            base = os.path.join(LOGDIR, "serial_%s" % stamp)
+            rotate = False
+            banner = "[serial] %s @115200 -> %s.log" % (port, base)
 
         stop = threading.Event()
         STATE["serial_active"] = True
         STATE["serial_stop"] = stop
         self._sse_headers()
-        sse_send(self.wfile, "line", {"text": "[serial] %s @115200 -> %s" % (port, logpath)})
+        sse_send(self.wfile, "line", {"text": banner})
         try:
             fd = os.open(port, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY)
             configure_tty(fd, 115200)   # raw 8N1 @115200 on this fd (fixes garbage)
@@ -342,8 +399,9 @@ class Handler(BaseHTTPRequestHandler):
             STATE["serial_active"] = False
             sse_send(self.wfile, "done", {"ok": False, "msg": "Cannot open port: %s" % e})
             return
+        writer = None
         try:
-            with os.fdopen(fd, "rb", buffering=0) as f, open(logpath, "ab") as log:
+            with os.fdopen(fd, "rb", buffering=0) as f, RotatingWriter(base, rotate, ROTATE_BYTES) as writer:
                 buf = b""
                 while not stop.is_set():
                     r, _, _ = select.select([f], [], [], 0.5)
@@ -352,8 +410,7 @@ class Handler(BaseHTTPRequestHandler):
                     chunk = f.read(4096)
                     if not chunk:
                         continue
-                    log.write(chunk)
-                    log.flush()
+                    writer.write(chunk)
                     buf += chunk
                     while b"\n" in buf:
                         line, buf = buf.split(b"\n", 1)
@@ -364,7 +421,9 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             STATE["serial_active"] = False
             STATE["serial_stop"] = None
-        sse_send(self.wfile, "done", {"ok": True, "msg": "Serial stopped. Log: %s" % logpath})
+        final = writer.path if writer else (base + ".log")
+        parts = (" (%d parts)" % writer.part) if (writer and writer.part > 1) else ""
+        sse_send(self.wfile, "done", {"ok": True, "msg": "Serial stopped. Log: %s%s" % (final, parts)})
 
     def api_serial_stop(self):
         ev = STATE.get("serial_stop")
