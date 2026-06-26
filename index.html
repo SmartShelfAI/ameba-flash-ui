@@ -122,6 +122,7 @@
 
   <div class="right">
     <h2><span>Output</span><span style="display:flex;gap:6px">
+      <button id="btnCopy" style="padding:2px 8px;font-size:11px">⧉ copy</button>
       <button id="btnSave" style="padding:2px 8px;font-size:11px">⤓ save</button>
       <button id="btnClear" style="padding:2px 8px;font-size:11px">clear</button>
     </span></h2>
@@ -273,6 +274,24 @@ $("#btnSerialStop").onclick = async () => { await fetch("/api/serial/stop",{meth
 
 $("#btnClear").onclick = () => { logBuf.length = 0; logEl.innerHTML=""; };
 $("#btnReload").onclick = () => loadTargets();
+// Copy the visible output (capped at LOG_MAX lines) to the clipboard.
+// Bounded by design, so size is never a problem; 127.0.0.1 is a secure context
+// so the Clipboard API is available, with an execCommand fallback just in case.
+$("#btnCopy").onclick = async () => {
+  const text = logEl.textContent;
+  if (!text.trim()) { setStatus($("#stSerial"), "nothing to copy", "warn"); return; }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position="fixed"; ta.style.opacity="0";
+      document.body.appendChild(ta); ta.select();
+      document.execCommand("copy"); ta.remove();
+    }
+    setStatus($("#stSerial"), `copied ${text.length} chars to clipboard`, "ok");
+  } catch (e) { setStatus($("#stSerial"), "copy failed: " + e.message, "err"); }
+};
 // Save whatever is currently shown in the output panel to LOG/ in the project
 // folder (where the build runs), with a timestamped filename. Server-side.
 // (The serial stream is also written in full to logs/serial_<date>.log.)

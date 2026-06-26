@@ -51,9 +51,12 @@ needs the server for its API (it will tell you so if opened as a file).
   - `POST /api/save-log` — save the current output panel to `LOG/log_<timestamp>.txt`
 - `index.html` — a single static page, no framework.
 
-The **⤓ save** button writes the current output panel to a `LOG/` subfolder in the project
-root (where the build runs), with a timestamped filename — handy for keeping a specific run.
-The serial stream is *also* auto-saved in full to `logs/serial_<date>.log` while it runs.
+The output panel is capped at the last 2000 lines (so the tab never bloats). **⧉ copy**
+puts that visible text on the clipboard; **⤓ save** writes it to a `LOG/` subfolder in the
+project root (where the build runs), with a timestamped filename — handy for keeping a
+specific run. Both are bounded by the cap, so size is never an issue. The serial stream is
+*also* auto-saved in full to `logs/serial_<date>.log` while it runs — use that file if you
+need the complete session.
 
 The **full build log is intentionally not streamed** to the browser: a full SDK build
 prints tens of thousands of lines and would crash the tab. The build step shows only
