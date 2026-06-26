@@ -217,6 +217,8 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/api/serial/stop":
             return self.api_serial_stop()
+        if u.path == "/api/save-log":
+            return self.api_save_log()
         return self._json({"error": "unknown route"}, 404)
 
     # -- endpoints --
@@ -369,6 +371,24 @@ class Handler(BaseHTTPRequestHandler):
         if ev:
             ev.set()
         self._json({"stopped": True})
+
+    def api_save_log(self):
+        # Save the current output panel text into <PROJECT_ROOT>/LOG/ with a
+        # timestamped filename. ROOT is the folder the build runs from.
+        body = self._read_body()
+        text = body.get("text", "")
+        if not text.strip():
+            return self._json({"ok": False, "msg": "nothing to save"}, 400)
+        save_dir = os.path.join(ROOT, "LOG")
+        try:
+            os.makedirs(save_dir, exist_ok=True)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(save_dir, "log_%s.txt" % stamp)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        except OSError as e:
+            return self._json({"ok": False, "msg": "write failed: %s" % e}, 500)
+        self._json({"ok": True, "path": path})
 
 
 def main():

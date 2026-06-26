@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 
 # Captured serial logs
+LOG/
 logs/
 *.log
 

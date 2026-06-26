@@ -273,18 +273,19 @@ $("#btnSerialStop").onclick = async () => { await fetch("/api/serial/stop",{meth
 
 $("#btnClear").onclick = () => { logBuf.length = 0; logEl.innerHTML=""; };
 $("#btnReload").onclick = () => loadTargets();
-// Save whatever is currently shown in the output panel to a .txt file.
-// (The serial stream is also written in full to logs/serial_<date>.log on the server.)
-$("#btnSave").onclick = () => {
+// Save whatever is currently shown in the output panel to LOG/ in the project
+// folder (where the build runs), with a timestamped filename. Server-side.
+// (The serial stream is also written in full to logs/serial_<date>.log.)
+$("#btnSave").onclick = async () => {
   const text = logEl.textContent;
   if (!text.trim()) { setStatus($("#stSerial"), "nothing to save yet", "warn"); return; }
-  const ts = new Date().toISOString().replace(/[:.]/g,"-").slice(0,19);
-  const blob = new Blob([text], { type:"text/plain" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `serial_output_${ts}.txt`;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  try {
+    const r = await fetch("/api/save-log", { method:"POST",
+      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ text }) });
+    const j = await r.json();
+    if (j.ok) { setStatus($("#stSerial"), "saved → " + j.path, "ok"); log("✓ saved → " + j.path, "l-ok"); }
+    else { setStatus($("#stSerial"), "save failed: " + (j.msg||""), "err"); }
+  } catch (e) { setStatus($("#stSerial"), "save failed: " + e.message, "err"); }
 };
 loadTargets();
 </script>

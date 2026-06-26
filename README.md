@@ -48,7 +48,12 @@ needs the server for its API (it will tell you so if opened as a file).
   - `GET /api/uart` — is the serial port present and free?
   - `GET /api/flash?mode=full|app` — flash via `uartfwburn`, baud sweep
   - `GET /api/serial` / `POST /api/serial/stop` — read the port, tee to `logs/`
+  - `POST /api/save-log` — save the current output panel to `LOG/log_<timestamp>.txt`
 - `index.html` — a single static page, no framework.
+
+The **⤓ save** button writes the current output panel to a `LOG/` subfolder in the project
+root (where the build runs), with a timestamped filename — handy for keeping a specific run.
+The serial stream is *also* auto-saved in full to `logs/serial_<date>.log` while it runs.
 
 The **full build log is intentionally not streamed** to the browser: a full SDK build
 prints tens of thousands of lines and would crash the tab. The build step shows only
