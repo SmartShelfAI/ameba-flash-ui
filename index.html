@@ -59,21 +59,6 @@
   .hint { color:var(--mut); font-size:11.5px; margin-top:6px; }
   #projPath { flex:1; min-width:0; font-size:12px; color:var(--fg); word-break:break-all;
               font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-  .overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
-             align-items:center; justify-content:center; z-index:10; }
-  .dlg { background:var(--panel); border:1px solid var(--line); border-radius:10px;
-         width:540px; max-width:92vw; max-height:72vh; display:flex; flex-direction:column;
-         padding:14px; }
-  .dlg h3 { margin:0 0 8px; font-size:13px; color:var(--mut); font-weight:600;
-            text-transform:uppercase; letter-spacing:.04em; }
-  #browsePath { flex:1; min-width:0; font-size:12px; word-break:break-all;
-                font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-  #browseList { flex:1; overflow:auto; margin-top:8px; border:1px solid var(--line);
-                border-radius:8px; min-height:180px; }
-  .ditem { padding:7px 10px; cursor:pointer; border-bottom:1px solid var(--line); }
-  .ditem:last-child { border-bottom:none; }
-  .ditem:hover { background:#222631; }
-  .ditem::before { content:"▸ "; color:var(--mut); }
 </style>
 </head>
 <body>
@@ -192,22 +177,6 @@
   </div>
 </main>
 
-<div class="overlay" id="browseModal">
-  <div class="dlg">
-    <h3>Choose project folder</h3>
-    <div class="row">
-      <button id="btnUp">⬆ up</button>
-      <span id="browsePath"></span>
-    </div>
-    <div id="browseList"></div>
-    <div class="status" id="stBrowse"></div>
-    <div class="row" style="margin-top:10px;justify-content:flex-end">
-      <button id="btnBrowseCancel">Cancel</button>
-      <button id="btnBrowseSelect" class="primary">Select this folder</button>
-    </div>
-  </div>
-</div>
-
 <script>
 const $ = s => document.querySelector(s);
 const logEl = $("#log");
@@ -257,8 +226,7 @@ function runStream(url, { onLine, onProgress, onDone }) {
   return es;
 }
 
-// ── project folder (Browse…) ──
-let browsePath = null;
+// ── project folder (Browse… → native macOS folder picker) ──
 async function showProject() {
   try {
     const r = await fetch("/api/project");
@@ -268,53 +236,30 @@ async function showProject() {
   } catch (e) { $("#projPath").textContent = "(server not responding)"; }
 }
 $("#btnBrowse").onclick = async () => {
-  try {
-    const r = await fetch("/api/project");
-    const j = await r.json();
-    browsePath = j.root;
-  } catch (e) { browsePath = "/"; }
-  $("#browseModal").style.display = "flex";
-  renderBrowse();
-};
-async function renderBrowse() {
-  setStatus($("#stBrowse"), "", "");
+  setStatus($("#stBuild"), "waiting for the folder picker…", "warn");
   let j;
   try {
-    const r = await fetch("/api/browse?path=" + encodeURIComponent(browsePath));
+    const r = await fetch("/api/choose-folder", { method: "POST" });
     j = await r.json();
-    if (!j.ok) throw new Error(j.msg || ("HTTP " + r.status));
-  } catch (e) { setStatus($("#stBrowse"), e.message, "err"); return; }
-  browsePath = j.path;
-  $("#browsePath").textContent = j.path;
-  const up = $("#btnUp");
-  up.disabled = !j.parent;
-  up.onclick = () => { browsePath = j.parent; renderBrowse(); };
-  const list = $("#browseList");
-  list.innerHTML = "";
-  if (!j.dirs.length)
-    list.innerHTML = `<div style="padding:10px;color:var(--mut)">(no subfolders)</div>`;
-  for (const d of j.dirs) {
-    const el = document.createElement("div");
-    el.className = "ditem";
-    el.textContent = d;
-    el.onclick = () => { browsePath = j.path + "/" + d; renderBrowse(); };
-    list.appendChild(el);
+  } catch (e) {
+    setStatus($("#stBuild"), "folder picker failed: " + e.message +
+      " — restart serve.py if it was started before this feature existed", "err");
+    return;
   }
-}
-$("#btnBrowseCancel").onclick = () => { $("#browseModal").style.display = "none"; };
-$("#btnBrowseSelect").onclick = async () => {
+  if (j.cancelled) { setStatus($("#stBuild"), "", ""); return; }
+  if (!j.ok) { setStatus($("#stBuild"), j.msg || "folder picker failed", "err"); return; }
   try {
     const r = await fetch("/api/project", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: browsePath }) });
-    const j = await r.json();
-    if (!j.ok) { setStatus($("#stBrowse"), j.msg, "err"); return; }
-    $("#browseModal").style.display = "none";
-    $("#projPath").textContent = j.root;
-    log("project folder → " + j.root, "l-cmd");
-    if (j.warn) log("⚠ " + j.warn, "l-err");
+      body: JSON.stringify({ path: j.path }) });
+    const rj = await r.json();
+    if (!rj.ok) { setStatus($("#stBuild"), rj.msg, "err"); return; }
+    $("#projPath").textContent = rj.root;
+    setStatus($("#stBuild"), "", "");
+    log("project folder → " + rj.root, "l-cmd");
+    if (rj.warn) log("⚠ " + rj.warn, "l-err");
     loadTargets().then(refreshImageStatus);
-  } catch (e) { setStatus($("#stBrowse"), "save failed: " + e.message, "err"); }
+  } catch (e) { setStatus($("#stBuild"), "save failed: " + e.message, "err"); }
 };
 
 // ── completion jingle (WebAudio, no assets) ──

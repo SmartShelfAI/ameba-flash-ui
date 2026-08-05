@@ -350,8 +350,6 @@ class Handler(BaseHTTPRequestHandler):
             return self.api_targets()
         if u.path == "/api/project":
             return self._json({"root": ROOT})
-        if u.path == "/api/browse":
-            return self.api_browse(parse_qs(u.query))
         if u.path == "/api/uart":
             return self.api_uart()
         if u.path == "/api/image-status":
@@ -372,22 +370,26 @@ class Handler(BaseHTTPRequestHandler):
             return self.api_save_log()
         if u.path == "/api/project":
             return self.api_project_set()
+        if u.path == "/api/choose-folder":
+            return self.api_choose_folder()
         return self._json({"error": "unknown route"}, 404)
 
     # -- endpoints --
-    def api_browse(self, q):
-        # List subfolders for the project-folder picker. Localhost-only tool.
-        path = os.path.abspath(os.path.expanduser(q.get("path", [ROOT])[0] or ROOT))
-        if not os.path.isdir(path):
-            return self._json({"ok": False, "msg": "folder not found: %s" % path}, 400)
+    def api_choose_folder(self):
+        # Open the NATIVE macOS folder picker (osascript "choose folder") and
+        # return the chosen path. Blocks until the user picks or cancels.
         try:
-            dirs = sorted(n for n in os.listdir(path)
-                          if not n.startswith(".") and os.path.isdir(os.path.join(path, n)))
-        except OSError as e:
-            return self._json({"ok": False, "msg": "cannot list: %s" % e}, 400)
-        parent = os.path.dirname(path)
-        self._json({"ok": True, "path": path,
-                    "parent": parent if parent != path else None, "dirs": dirs})
+            p = subprocess.run(
+                ["osascript", "-e",
+                 'POSIX path of (choose folder with prompt "Choose the project folder'
+                 ' (the one with build_freertos.sh)" default location POSIX file "%s")' % ROOT],
+                capture_output=True, text=True, timeout=300)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return self._json({"ok": False, "msg": "folder picker failed: %s" % e}, 500)
+        if p.returncode != 0:   # "User canceled" — not an error worth shouting about
+            return self._json({"ok": False, "cancelled": True})
+        path = p.stdout.strip().rstrip("/")
+        self._json({"ok": True, "path": path})
 
     def api_project_set(self):
         # Switch the project root (the "Browse…" button) and persist the choice.

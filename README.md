@@ -10,9 +10,9 @@ runs on `127.0.0.1`.
 It wraps the toolchain you already use (`build_freertos.sh` / `build_test.sh`, the
 `uartfwburn` flasher, and the serial port) behind a few buttons:
 
-1. **Pick a project folder & build target** — **Browse…** switches the project root from the
-   UI (remembered across restarts in `state.json`); targets (full app or any incremental
-   `TEST/<id>`) are auto-discovered.
+1. **Pick a project folder & build target** — **Browse…** opens the native macOS folder
+   picker and switches the project root (remembered across restarts in `state.json`);
+   targets (full app or any incremental `TEST/<id>`) are auto-discovered.
 2. **Build** — runs the build script; shows a progress bar and the result.
 3. **Check UART** — finds the USB-serial port and tells you if it is free.
 4. **Flash** — calls `uartfwburn` (single clean attempt at a chosen baud; default 2000000,
@@ -55,7 +55,7 @@ needs the server for its API (it will tell you so if opened as a file).
   endpoints, streaming live output to the browser via **Server-Sent Events**:
   - `GET /api/targets` — list build targets (`full` + `TEST/*/test.cmake`)
   - `GET /api/project` / `POST /api/project` — show / switch the project root (persisted to `state.json`)
-  - `GET /api/browse?path=…` — list subfolders for the project-folder picker
+  - `POST /api/choose-folder` — open the native macOS folder picker (osascript), return the chosen path
   - `GET /api/build?target=…` — run the build; stream **progress %** and errors only
   - `GET /api/uart` — is the serial port present and free?
   - `GET /api/image-status?target=…&mode=…` — is there a built image to flash, and when built?
