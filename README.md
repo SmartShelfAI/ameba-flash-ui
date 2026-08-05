@@ -98,6 +98,8 @@ output panel is meant for the **serial** stream.
 
 - [`docs/build_pipeline.md`](docs/build_pipeline.md) — how the AmebaPro2 FreeRTOS build is
   wired (CMake scenario → `TEST_CMAKE` / app sources), and how to add an incremental test.
+- [`docs/project_folder_contract.md`](docs/project_folder_contract.md) — formal requirement:
+  which folder layout the panel accepts for Build vs flash-only.
 - [`docs/agent_file_hygiene.md`](docs/agent_file_hygiene.md) — file/environment hygiene
   rules (useful when a coding agent drives the build).
 
