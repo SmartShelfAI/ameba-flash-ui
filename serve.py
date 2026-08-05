@@ -230,6 +230,34 @@ def port_is_free(port):
         return False
 
 
+def passive_listen(port, seconds=2.0):
+    """Count bytes the board sends within `seconds`, read-only, sending nothing.
+
+    >0 -> firmware is running (boot/app logs) => NOT in UART DOWNLOAD mode.
+    0   -> inconclusive: the ROM in download mode is silent, but so is a
+         quiet app. Never probe actively: a half-negotiated ROM handshake
+         consumes the one download attempt per download-mode entry.
+    Returns None if the port could not be opened.
+    """
+    try:
+        fd = os.open(port, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY)
+    except OSError:
+        return None
+    try:
+        configure_tty(fd, 115200)
+        n = 0
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            r, _, _ = select.select([fd], [], [], 0.2)
+            if r:
+                chunk = os.read(fd, 4096)
+                if chunk:
+                    n += len(chunk)
+        return n
+    finally:
+        os.close(fd)
+
+
 def flush_port(port):
     """Drain any stale bytes sitting in the tty buffers before flashing.
 
@@ -483,10 +511,29 @@ class Handler(BaseHTTPRequestHandler):
         if not port:
             return self._json({"available": False, "reason": "port /dev/cu.wchusbserial* not found"})
         free = port_is_free(port)
-        self._json({
+        out = {
             "available": True, "port": port, "free": free,
-            "reason": "ready to flash" if free else "port busy (close screen/picocom/log)",
-        })
+            "reason": "port free" if free else "port busy (close screen/picocom/log)",
+        }
+        # Passive board-mode hint: listen ~2 s WITHOUT sending anything (an
+        # active ROM ping would consume the one download attempt per entry).
+        # Traffic => firmware is running => definitely NOT in download mode.
+        # Silence is only *consistent with* download mode (a quiet app is
+        # silent too) — the blue LED-B is the ground truth.
+        if free and not STATE["serial_active"]:
+            n = passive_listen(port, 2.0)
+            out["bytes"] = n
+            if n is None:
+                out["hint"] = "could not listen to the port"
+            elif n > 0:
+                out["hint"] = ("board talks (%d B in 2 s) — firmware is RUNNING, "
+                               "NOT in download mode" % n)
+                out["download_likely"] = False
+            else:
+                out["hint"] = ("port silent — consistent with UART DOWNLOAD mode "
+                               "(or a quiet app); check the blue LED-B")
+                out["download_likely"] = True
+        self._json(out)
 
     def api_build(self, q):
         target = (q.get("target", ["full"])[0])

@@ -16,7 +16,11 @@ It wraps the toolchain you already use (`build_freertos.sh` / `build_test.sh`, t
    disabled there; the flasher is taken from the project the tool lives in).
    Targets (full app or any incremental `TEST/<id>`) are auto-discovered.
 2. **Build** — runs the build script; shows a progress bar and the result.
-3. **Check UART** — finds the USB-serial port and tells you if it is free.
+3. **Check UART** — finds the USB-serial port, tells you if it is free, and listens ~2 s
+   for board output: serial traffic means the firmware is running (NOT in download mode);
+   silence is consistent with UART DOWNLOAD mode (the blue LED-B is the ground truth).
+   It never pings the ROM actively — a half-negotiated handshake would consume the one
+   download attempt per download-mode entry.
 4. **Flash** — calls `uartfwburn` (single clean attempt at a chosen baud; default 2000000,
    drop to 115200 on adapters that can't hold high bauds — the multi-baud sweep can wedge
    the AmebaPro2 ROM). A short jingle plays when the flash finishes (success or fail).

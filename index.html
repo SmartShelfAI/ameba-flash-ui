@@ -101,6 +101,9 @@
         <span class="pill" id="pillUart">not checked</span>
       </div>
       <div class="status" id="stUart"></div>
+      <div class="hint">The port itself can't see the ROM mode, so the check also listens
+        ~2 s for board output: traffic = firmware running (not download mode); silence =
+        consistent with download mode. Ground truth: blue LED-B on = download mode.</div>
     </div>
 
     <div class="step">
@@ -363,15 +366,19 @@ $("#btnBuild").onclick = () => {
 
 // ── uart ──
 $("#btnUart").onclick = async () => {
-  setStatus($("#stUart"),"checking…","warn");
+  setStatus($("#stUart"),"checking… (includes a 2 s passive listen)","warn");
   const r = await fetch("/api/uart"); const j = await r.json();
   const pill = $("#pillUart");
   if (!j.available){ pill.textContent="no port"; pill.className="pill err";
     setStatus($("#stUart"), j.reason, "err"); return; }
-  if (j.free){ pill.textContent="ready"; pill.className="pill ok";
-    setStatus($("#stUart"), `${j.port} — ${j.reason}`, "ok"); }
-  else { pill.textContent="busy"; pill.className="pill err";
-    setStatus($("#stUart"), `${j.port} — ${j.reason}`, "err"); }
+  if (!j.free){ pill.textContent="busy"; pill.className="pill err";
+    setStatus($("#stUart"), `${j.port} — ${j.reason}`, "err"); return; }
+  pill.textContent="port free"; pill.className="pill ok";
+  if (j.hint){  // passive-listen verdict: traffic = firmware running (NOT download mode)
+    setStatus($("#stUart"), `${j.port} — ${j.hint}`, j.download_likely ? "ok" : "warn");
+  } else {
+    setStatus($("#stUart"), `${j.port} — ${j.reason}`, "ok");
+  }
 };
 
 // ── flash ──
