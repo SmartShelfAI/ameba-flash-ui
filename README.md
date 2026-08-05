@@ -10,11 +10,15 @@ runs on `127.0.0.1`.
 It wraps the toolchain you already use (`build_freertos.sh` / `build_test.sh`, the
 `uartfwburn` flasher, and the serial port) behind a few buttons:
 
-1. **Pick a build target** — full app or any incremental `TEST/<id>` (auto-discovered).
+1. **Pick a project folder & build target** — **Browse…** switches the project root from the
+   UI (remembered across restarts in `state.json`); targets (full app or any incremental
+   `TEST/<id>`) are auto-discovered.
 2. **Build** — runs the build script; shows a progress bar and the result.
 3. **Check UART** — finds the USB-serial port and tells you if it is free.
-4. **Flash** — calls `uartfwburn` (single clean attempt at a chosen baud; default 115200,
-   since the multi-baud sweep can wedge the AmebaPro2 ROM). Each build's image is also copied
+4. **Flash** — calls `uartfwburn` (single clean attempt at a chosen baud; default 2000000,
+   drop to 115200 on adapters that can't hold high bauds — the multi-baud sweep can wedge
+   the AmebaPro2 ROM). A short jingle plays when the flash finishes (success or fail).
+   Each build's image is also copied
    into the selected target's folder (`TEST/<id>/flash_ntz.bin`), so a target's existing image
    can be re-flashed without rebuilding; the panel shows whether an image is present and when it was built.
 5. **Serial log** — streams the board's UART output to the page and to a file, with optional
@@ -50,6 +54,8 @@ needs the server for its API (it will tell you so if opened as a file).
 - `serve.py` — a `ThreadingHTTPServer` (stdlib) that serves `index.html` and exposes a few
   endpoints, streaming live output to the browser via **Server-Sent Events**:
   - `GET /api/targets` — list build targets (`full` + `TEST/*/test.cmake`)
+  - `GET /api/project` / `POST /api/project` — show / switch the project root (persisted to `state.json`)
+  - `GET /api/browse?path=…` — list subfolders for the project-folder picker
   - `GET /api/build?target=…` — run the build; stream **progress %** and errors only
   - `GET /api/uart` — is the serial port present and free?
   - `GET /api/image-status?target=…&mode=…` — is there a built image to flash, and when built?
@@ -94,10 +100,11 @@ output panel is meant for the **serial** stream.
 Developed with an **external CH340G** wired to the board's UART pins (signal + GND only — the
 board runs on its own battery, so no shared USB power). A few hard-won notes:
 
-- **Prefer 115200.** On macOS the CH340G reports `non-standard rate` at 2M/921600 and fails;
-  and because the ROM accepts only one download attempt per entry, that first failure then
-  wedges the session so even a later 115200 attempt fails. A single clean **115200** attempt
-  is the reliable path — and the default. Use higher bauds only if your adapter handles them.
+- **Prefer 115200 on a CH340G.** On macOS the CH340G reports `non-standard rate` at 2M/921600
+  and fails; and because the ROM accepts only one download attempt per entry, that first failure
+  then wedges the session so even a later 115200 attempt fails. A single clean **115200** attempt
+  is the reliable path. The panel defaults to **2000000** (fast when the adapter handles it) —
+  if you see `non-standard rate` or `ucfg fail`, switch **Baud** to 115200.
 - **One attempt per download-mode entry.** If a flash fails, re-enter download mode
   (RESET + UART DOWNLOAD together, or reboot the board) before the next try — don't just press
   Flash again. If the adapter stays wedged, power-cycle it (and the board).

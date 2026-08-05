@@ -57,6 +57,23 @@
          font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; color:#cdd3dc; }
   #log .l-ok{color:var(--ok)} #log .l-err{color:var(--err)} #log .l-cmd{color:var(--accent)}
   .hint { color:var(--mut); font-size:11.5px; margin-top:6px; }
+  #projPath { flex:1; min-width:0; font-size:12px; color:var(--fg); word-break:break-all;
+              font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
+             align-items:center; justify-content:center; z-index:10; }
+  .dlg { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+         width:540px; max-width:92vw; max-height:72vh; display:flex; flex-direction:column;
+         padding:14px; }
+  .dlg h3 { margin:0 0 8px; font-size:13px; color:var(--mut); font-weight:600;
+            text-transform:uppercase; letter-spacing:.04em; }
+  #browsePath { flex:1; min-width:0; font-size:12px; word-break:break-all;
+                font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  #browseList { flex:1; overflow:auto; margin-top:8px; border:1px solid var(--line);
+                border-radius:8px; min-height:180px; }
+  .ditem { padding:7px 10px; cursor:pointer; border-bottom:1px solid var(--line); }
+  .ditem:last-child { border-bottom:none; }
+  .ditem:hover { background:#222631; }
+  .ditem::before { content:"▸ "; color:var(--mut); }
 </style>
 </head>
 <body>
@@ -69,12 +86,18 @@
 
     <div class="step">
       <h2>1 · Build target</h2>
-      <label>Project / test</label>
+      <label>Project folder</label>
+      <div class="row">
+        <span id="projPath">…</span>
+        <button id="btnBrowse" title="Choose project folder">Browse…</button>
+      </div>
+      <label style="margin-top:8px">Project / test</label>
       <div class="row">
         <select id="target"></select>
         <button id="btnReload" title="Refresh list">⟳</button>
       </div>
-      <div class="hint">Discovered from <code>TEST/*/test.cmake</code> + the full application.</div>
+      <div class="hint">Discovered from <code>TEST/*/test.cmake</code> + the full application.
+        The folder choice is remembered across restarts.</div>
     </div>
 
     <div class="step">
@@ -104,9 +127,9 @@
       </select>
       <label style="margin-top:8px">Baud</label>
       <select id="flashBaud">
-        <option value="115200">115200 — single attempt (reliable, default)</option>
+        <option value="2000000" selected>2000000 — single attempt (fast, default; flaky on CH340G)</option>
         <option value="921600">921600 — single attempt</option>
-        <option value="2000000">2000000 — single attempt (fast, flaky on CH340G)</option>
+        <option value="115200">115200 — single attempt (most reliable)</option>
         <option value="auto">Auto sweep 2M→921k→115200 (can wedge the ROM — avoid)</option>
       </select>
       <div class="memo">
@@ -169,6 +192,22 @@
   </div>
 </main>
 
+<div class="overlay" id="browseModal">
+  <div class="dlg">
+    <h3>Choose project folder</h3>
+    <div class="row">
+      <button id="btnUp">⬆ up</button>
+      <span id="browsePath"></span>
+    </div>
+    <div id="browseList"></div>
+    <div class="status" id="stBrowse"></div>
+    <div class="row" style="margin-top:10px;justify-content:flex-end">
+      <button id="btnBrowseCancel">Cancel</button>
+      <button id="btnBrowseSelect" class="primary">Select this folder</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = s => document.querySelector(s);
 const logEl = $("#log");
@@ -216,6 +255,92 @@ function runStream(url, { onLine, onProgress, onDone }) {
   es.addEventListener("done", e => { es.close(); activeStream=null; onDone(JSON.parse(e.data)); });
   es.onerror = () => { es.close(); activeStream=null; onDone({ ok:false, code:-1, msg:"connection lost" }); };
   return es;
+}
+
+// ── project folder (Browse…) ──
+let browsePath = null;
+async function showProject() {
+  try {
+    const r = await fetch("/api/project");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    $("#projPath").textContent = j.root;
+  } catch (e) { $("#projPath").textContent = "(server not responding)"; }
+}
+$("#btnBrowse").onclick = async () => {
+  try {
+    const r = await fetch("/api/project");
+    const j = await r.json();
+    browsePath = j.root;
+  } catch (e) { browsePath = "/"; }
+  $("#browseModal").style.display = "flex";
+  renderBrowse();
+};
+async function renderBrowse() {
+  setStatus($("#stBrowse"), "", "");
+  let j;
+  try {
+    const r = await fetch("/api/browse?path=" + encodeURIComponent(browsePath));
+    j = await r.json();
+    if (!j.ok) throw new Error(j.msg || ("HTTP " + r.status));
+  } catch (e) { setStatus($("#stBrowse"), e.message, "err"); return; }
+  browsePath = j.path;
+  $("#browsePath").textContent = j.path;
+  const up = $("#btnUp");
+  up.disabled = !j.parent;
+  up.onclick = () => { browsePath = j.parent; renderBrowse(); };
+  const list = $("#browseList");
+  list.innerHTML = "";
+  if (!j.dirs.length)
+    list.innerHTML = `<div style="padding:10px;color:var(--mut)">(no subfolders)</div>`;
+  for (const d of j.dirs) {
+    const el = document.createElement("div");
+    el.className = "ditem";
+    el.textContent = d;
+    el.onclick = () => { browsePath = j.path + "/" + d; renderBrowse(); };
+    list.appendChild(el);
+  }
+}
+$("#btnBrowseCancel").onclick = () => { $("#browseModal").style.display = "none"; };
+$("#btnBrowseSelect").onclick = async () => {
+  try {
+    const r = await fetch("/api/project", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: browsePath }) });
+    const j = await r.json();
+    if (!j.ok) { setStatus($("#stBrowse"), j.msg, "err"); return; }
+    $("#browseModal").style.display = "none";
+    $("#projPath").textContent = j.root;
+    log("project folder → " + j.root, "l-cmd");
+    if (j.warn) log("⚠ " + j.warn, "l-err");
+    loadTargets().then(refreshImageStatus);
+  } catch (e) { setStatus($("#stBrowse"), "save failed: " + e.message, "err"); }
+};
+
+// ── completion jingle (WebAudio, no assets) ──
+// The AudioContext is created/resumed inside the Flash click (a user gesture),
+// so the browser allows it to play when the flash finishes.
+let audioCtx = null;
+function ensureAudio() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch (e) { /* no audio — fine */ }
+}
+function tone(t0, freq, dur, vol) {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = "sine"; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.linearRampToValueAtTime(vol, t0 + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(t0); o.stop(t0 + dur + 0.05);
+}
+function jingle(ok) {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime + 0.03;
+  if (ok) [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(t + i * 0.12, f, 0.28, 0.16));
+  else { tone(t, 220, 0.25, 0.18); tone(t + 0.3, 174.61, 0.45, 0.18); }
 }
 
 // ── targets ──
@@ -303,6 +428,7 @@ $("#btnUart").onclick = async () => {
 
 // ── flash ──
 $("#btnFlash").onclick = () => {
+  ensureAudio();   // unlock audio inside the user gesture so the jingle can play
   const mode = $("#flashMode").value;
   const baud = $("#flashBaud").value;
   const bar = $("#barFlash"), fill = bar.querySelector("i");
@@ -315,6 +441,7 @@ $("#btnFlash").onclick = () => {
     onDone: d => {
       bar.classList.remove("indet"); fill.style.width="100%";
       $("#btnFlash").disabled=false;
+      jingle(d.ok);
       if (d.ok){ setStatus($("#stFlash"), "✓ "+d.msg, "ok"); log("✓ "+d.msg,"l-ok"); }
       else { fill.style.width="0"; setStatus($("#stFlash"), "✗ "+(d.msg||"failed"), "err"); log("✗ "+(d.msg||"FAIL"),"l-err"); }
     }
@@ -374,6 +501,7 @@ $("#btnSave").onclick = async () => {
     else { setStatus($("#stSerial"), "save failed: " + (j.msg||""), "err"); }
   } catch (e) { setStatus($("#stSerial"), "save failed: " + e.message, "err"); }
 };
+showProject();
 loadTargets().then(refreshImageStatus);
 </script>
 </body>

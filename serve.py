@@ -43,6 +43,41 @@ PG_DIR = os.path.join(ROOT, "sdk", "tools", "Pro2_PG_tool _v1.4.3")
 PORT_GLOB = "/dev/cu.wchusbserial*"
 HTTP_PORT = int(os.environ.get("FLASH_UI_PORT", "8765"))
 
+# UI state persisted across restarts (last selected project root).
+STATE_FILE = os.path.join(HERE, "state.json")
+
+
+def set_root(path):
+    """Point the whole tool at a different project root (chosen via the UI).
+
+    Everything else derives from ROOT at call time, so rebinding these globals
+    is enough. Only touch this between operations (build/flash hold the lock).
+    """
+    global ROOT, IMAGES, LOGDIR, PG_DIR
+    ROOT = path
+    IMAGES = os.path.join(ROOT, "images")
+    LOGDIR = os.path.join(ROOT, "logs")
+    PG_DIR = os.path.join(ROOT, "sdk", "tools", "Pro2_PG_tool _v1.4.3")
+
+
+def load_state():
+    """Restore the last selected project root, if it still exists."""
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            saved = json.load(f).get("project_root")
+    except (OSError, ValueError):
+        return
+    if saved and os.path.isdir(saved):
+        set_root(saved)
+
+
+def save_state():
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"project_root": ROOT}, f)
+    except OSError:
+        pass
+
 # ── Shared state (one build/flash at a time; serial vs flash are exclusive) ───
 STATE = {
     "lock": threading.Lock(),     # guards "busy" op (build OR flash)
@@ -313,6 +348,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._serve_file(os.path.join(HERE, "index.html"), "text/html; charset=utf-8")
         if u.path == "/api/targets":
             return self.api_targets()
+        if u.path == "/api/project":
+            return self._json({"root": ROOT})
+        if u.path == "/api/browse":
+            return self.api_browse(parse_qs(u.query))
         if u.path == "/api/uart":
             return self.api_uart()
         if u.path == "/api/image-status":
@@ -331,9 +370,41 @@ class Handler(BaseHTTPRequestHandler):
             return self.api_serial_stop()
         if u.path == "/api/save-log":
             return self.api_save_log()
+        if u.path == "/api/project":
+            return self.api_project_set()
         return self._json({"error": "unknown route"}, 404)
 
     # -- endpoints --
+    def api_browse(self, q):
+        # List subfolders for the project-folder picker. Localhost-only tool.
+        path = os.path.abspath(os.path.expanduser(q.get("path", [ROOT])[0] or ROOT))
+        if not os.path.isdir(path):
+            return self._json({"ok": False, "msg": "folder not found: %s" % path}, 400)
+        try:
+            dirs = sorted(n for n in os.listdir(path)
+                          if not n.startswith(".") and os.path.isdir(os.path.join(path, n)))
+        except OSError as e:
+            return self._json({"ok": False, "msg": "cannot list: %s" % e}, 400)
+        parent = os.path.dirname(path)
+        self._json({"ok": True, "path": path,
+                    "parent": parent if parent != path else None, "dirs": dirs})
+
+    def api_project_set(self):
+        # Switch the project root (the "Browse…" button) and persist the choice.
+        body = self._read_body()
+        path = os.path.abspath(os.path.expanduser((body.get("path") or "").strip()))
+        if not path or not os.path.isdir(path):
+            return self._json({"ok": False, "msg": "folder not found: %s" % path}, 400)
+        if not os.path.exists(os.path.join(path, "build_freertos.sh")):
+            return self._json({"ok": False,
+                               "msg": "not a project root (no build_freertos.sh there)"}, 400)
+        set_root(path)
+        save_state()
+        warn = None
+        if not os.path.exists(burn_binary()):
+            warn = "flasher binary not found under this root (sdk/tools/Pro2_PG_tool _v1.4.3)"
+        self._json({"ok": True, "root": ROOT, "warn": warn})
+
     def api_targets(self):
         targets = [{"id": "full", "label": "Full application (build_freertos.sh)"}]
         test_dir = os.path.join(ROOT, "TEST")
@@ -607,6 +678,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    load_state()   # last project root chosen via the Browse… button
     if not os.path.isdir(ROOT):
         print("Project root not found:", ROOT)
         sys.exit(1)
