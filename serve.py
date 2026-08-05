@@ -40,6 +40,9 @@ ROOT = os.path.abspath(os.environ.get("PROJECT_ROOT") or os.getcwd())
 IMAGES = os.path.join(ROOT, "images")
 LOGDIR = os.path.join(ROOT, "logs")
 PG_DIR = os.path.join(ROOT, "sdk", "tools", "Pro2_PG_tool _v1.4.3")
+# The project the tool itself lives in. Used as a fallback for the flasher
+# binary when a flash-only folder (no sdk/tools) is selected via Browse….
+HOME_PG_DIR = os.path.join(ROOT, "sdk", "tools", "Pro2_PG_tool _v1.4.3")
 PORT_GLOB = "/dev/cu.wchusbserial*"
 HTTP_PORT = int(os.environ.get("FLASH_UI_PORT", "8765"))
 
@@ -128,7 +131,13 @@ class RotatingWriter:
 
 
 def burn_binary():
+    """Path to uartfwburn: from the selected project, falling back to the
+    tool's home project (flash-only folders have no sdk/tools of their own)."""
     name = "uartfwburn.arm.darwin" if os.uname().machine == "arm64" else "uartfwburn.darwin"
+    for base in (PG_DIR, HOME_PG_DIR):
+        p = os.path.join(base, name)
+        if os.path.exists(p):
+            return p
     return os.path.join(PG_DIR, name)
 
 
@@ -169,12 +178,39 @@ def target_dir(target):
 
 def resolve_image(target, basename):
     """Path of the image to flash for a target: prefer the target's own copy,
-    fall back to the shared images/ copy."""
+    fall back to the shared images/ copy, then to the project root itself.
+
+    The last fallback covers flash-only folders where images sit directly in
+    the chosen folder, possibly with versioned names (flash_ntz_*_v1.bin) —
+    the newest match wins. The image-status line always shows the resolved
+    file, so the user sees exactly what will be flashed.
+    """
     if target and target != "full":
         cand = os.path.join(target_dir(target), basename)
         if os.path.exists(cand):
             return cand
-    return os.path.join(IMAGES, basename)
+    for d in (IMAGES, ROOT):
+        cand = os.path.join(d, basename)
+        if os.path.exists(cand):
+            return cand
+    stem, ext = os.path.splitext(basename)
+    cands = sorted(
+        (p for d in (IMAGES, ROOT) for p in glob.glob(os.path.join(d, stem + "*" + ext))),
+        key=os.path.getmtime)
+    return cands[-1] if cands else os.path.join(IMAGES, basename)
+
+
+def is_build_root(path):
+    """True if the folder can actually build (has the build scripts)."""
+    return os.path.exists(os.path.join(path, "build_freertos.sh"))
+
+
+def is_flash_root(path):
+    """True if the folder holds flashable images (flash-only folders allowed)."""
+    return any(glob.glob(os.path.join(path, pat)) for pat in
+               ("flash_ntz*.bin", "firmware_ntz*.bin",
+                os.path.join("images", "flash_ntz*.bin"),
+                os.path.join("images", "firmware_ntz*.bin")))
 
 
 def now_hms_ms():
@@ -346,10 +382,14 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path in ("/", "/index.html"):
             return self._serve_file(os.path.join(HERE, "index.html"), "text/html; charset=utf-8")
+        if u.path == "/favicon.ico":
+            self.send_response(204)   # no icon — silence the browser's 404 noise
+            self.end_headers()
+            return
         if u.path == "/api/targets":
             return self.api_targets()
         if u.path == "/api/project":
-            return self._json({"root": ROOT})
+            return self._json({"root": ROOT, "can_build": is_build_root(ROOT)})
         if u.path == "/api/uart":
             return self.api_uart()
         if u.path == "/api/image-status":
@@ -382,7 +422,8 @@ class Handler(BaseHTTPRequestHandler):
             p = subprocess.run(
                 ["osascript", "-e",
                  'POSIX path of (choose folder with prompt "Choose the project folder'
-                 ' (the one with build_freertos.sh)" default location POSIX file "%s")' % ROOT],
+                 ' (with build_freertos.sh, or a flash-only folder with *_ntz*.bin)"'
+                 ' default location POSIX file "%s")' % ROOT],
                 capture_output=True, text=True, timeout=300)
         except (OSError, subprocess.TimeoutExpired) as e:
             return self._json({"ok": False, "msg": "folder picker failed: %s" % e}, 500)
@@ -393,19 +434,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_project_set(self):
         # Switch the project root (the "Browse…" button) and persist the choice.
+        # A valid folder either builds (build_freertos.sh) or at least holds
+        # flashable images (a flash-only folder, e.g. exported *_ntz*.bin).
         body = self._read_body()
         path = os.path.abspath(os.path.expanduser((body.get("path") or "").strip()))
         if not path or not os.path.isdir(path):
-            return self._json({"ok": False, "msg": "folder not found: %s" % path}, 400)
-        if not os.path.exists(os.path.join(path, "build_freertos.sh")):
+            return self._json({"ok": False, "msg": "folder not found: '%s'" % path}, 400)
+        if not is_build_root(path) and not is_flash_root(path):
             return self._json({"ok": False,
-                               "msg": "not a project root (no build_freertos.sh there)"}, 400)
+                               "msg": "not a usable folder: '%s' has neither build_freertos.sh "
+                                      "nor any *_ntz*.bin images — pick the top folder of the project" % path}, 400)
         set_root(path)
         save_state()
+        can_build = is_build_root(ROOT)
         warn = None
-        if not os.path.exists(burn_binary()):
-            warn = "flasher binary not found under this root (sdk/tools/Pro2_PG_tool _v1.4.3)"
-        self._json({"ok": True, "root": ROOT, "warn": warn})
+        if not can_build:
+            warn = "flash-only folder (no build scripts) — Build is disabled"
+        if not os.path.exists(os.path.join(PG_DIR, "uartfwburn.arm.darwin")):
+            home = burn_binary()
+            warn = (warn + "; " if warn else "") + (
+                "using the flasher from %s" % os.path.relpath(home, ROOT)
+                if os.path.exists(home) else "flasher binary (uartfwburn) not found anywhere")
+        self._json({"ok": True, "root": ROOT, "can_build": can_build, "warn": warn})
 
     def api_targets(self):
         targets = [{"id": "full", "label": "Full application (build_freertos.sh)"}]
@@ -455,6 +505,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 cmd = [os.path.join(ROOT, "build_test.sh"), target]
             self._sse_headers()
+            if not os.path.exists(cmd[0]):
+                sse_send(self.wfile, "done", {"code": -1, "ok": False,
+                         "msg": "No build script in this folder (flash-only) — pick a full project to build."})
+                return
             rc = stream_build(self.wfile, cmd, ROOT)
             if rc is None:
                 return  # client disconnected mid-build

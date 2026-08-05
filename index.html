@@ -233,6 +233,8 @@ async function showProject() {
     if (!r.ok) throw new Error("HTTP " + r.status);
     const j = await r.json();
     $("#projPath").textContent = j.root;
+    $("#btnBuild").disabled = !j.can_build;
+    if (!j.can_build) setStatus($("#stBuild"), "flash-only folder — no build scripts here", "warn");
   } catch (e) { $("#projPath").textContent = "(server not responding)"; }
 }
 $("#btnBrowse").onclick = async () => {
@@ -258,6 +260,7 @@ $("#btnBrowse").onclick = async () => {
     setStatus($("#stBuild"), "", "");
     log("project folder → " + rj.root, "l-cmd");
     if (rj.warn) log("⚠ " + rj.warn, "l-err");
+    showProject();
     loadTargets().then(refreshImageStatus);
   } catch (e) { setStatus($("#stBuild"), "save failed: " + e.message, "err"); }
 };

@@ -11,8 +11,10 @@ It wraps the toolchain you already use (`build_freertos.sh` / `build_test.sh`, t
 `uartfwburn` flasher, and the serial port) behind a few buttons:
 
 1. **Pick a project folder & build target** — **Browse…** opens the native macOS folder
-   picker and switches the project root (remembered across restarts in `state.json`);
-   targets (full app or any incremental `TEST/<id>`) are auto-discovered.
+   picker and switches the project root (remembered across restarts in `state.json`).
+   A folder holding only `*_ntz*.bin` images is accepted as **flash-only** (Build is
+   disabled there; the flasher is taken from the project the tool lives in).
+   Targets (full app or any incremental `TEST/<id>`) are auto-discovered.
 2. **Build** — runs the build script; shows a progress bar and the result.
 3. **Check UART** — finds the USB-serial port and tells you if it is free.
 4. **Flash** — calls `uartfwburn` (single clean attempt at a chosen baud; default 2000000,
