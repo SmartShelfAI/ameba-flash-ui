@@ -176,14 +176,27 @@ def target_dir(target):
     return ROOT
 
 
+def _find_images(root, pattern):
+    """Files matching `pattern` in root, root/images, and ONE level of
+    subfolders — covers build collections like Free_RTOS/<build>/ that keep
+    each flashable build in its own folder."""
+    bases = [root, os.path.join(root, "images")]
+    bases += [d for d in glob.glob(os.path.join(root, "*")) if os.path.isdir(d)]
+    hits = []
+    for base in bases:
+        hits += glob.glob(os.path.join(base, pattern))
+    return hits
+
+
 def resolve_image(target, basename):
     """Path of the image to flash for a target: prefer the target's own copy,
     fall back to the shared images/ copy, then to the project root itself.
 
     The last fallback covers flash-only folders where images sit directly in
-    the chosen folder, possibly with versioned names (flash_ntz_*_v1.bin) —
-    the newest match wins. The image-status line always shows the resolved
-    file, so the user sees exactly what will be flashed.
+    the chosen folder or one level down (build collections), possibly with
+    versioned names (flash_ntz_*_v1.bin) — the newest match wins. The
+    image-status line always shows the resolved file, so the user sees
+    exactly what will be flashed.
     """
     if target and target != "full":
         cand = os.path.join(target_dir(target), basename)
@@ -194,9 +207,7 @@ def resolve_image(target, basename):
         if os.path.exists(cand):
             return cand
     stem, ext = os.path.splitext(basename)
-    cands = sorted(
-        (p for d in (IMAGES, ROOT) for p in glob.glob(os.path.join(d, stem + "*" + ext))),
-        key=os.path.getmtime)
+    cands = sorted(_find_images(ROOT, stem + "*" + ext), key=os.path.getmtime)
     return cands[-1] if cands else os.path.join(IMAGES, basename)
 
 
@@ -206,11 +217,9 @@ def is_build_root(path):
 
 
 def is_flash_root(path):
-    """True if the folder holds flashable images (flash-only folders allowed)."""
-    return any(glob.glob(os.path.join(path, pat)) for pat in
-               ("flash_ntz*.bin", "firmware_ntz*.bin",
-                os.path.join("images", "flash_ntz*.bin"),
-                os.path.join("images", "firmware_ntz*.bin")))
+    """True if the folder holds flashable images (flash-only folders allowed,
+    including build collections with images one level down)."""
+    return bool(_find_images(path, "flash_ntz*.bin") or _find_images(path, "firmware_ntz*.bin"))
 
 
 def now_hms_ms():
